@@ -150,7 +150,7 @@ Bu projeyi kullanan kullanıcılar, BDD100K veri setini indirirken ve kullanırk
 ## 🛠️ Kurulum
 
 ```bash
-git clone https://github.com/username/autonomous_driving.git
+git clone https://github.com/huseyin-dgn/Autonomous-Driving-Perception-and-Decision-System.git
 cd autonomous_driving
 pip install -r requirements.txt
 ```
@@ -162,7 +162,7 @@ pip install -r requirements.txt
 ### Görüntü inference
 
 ```bash
-python scripts/infer_image.py
+python scripts/infer_image.py --input data/sample.jpg --output outputs/predictions/result.jpg
 ```
 
 ### Video inference
