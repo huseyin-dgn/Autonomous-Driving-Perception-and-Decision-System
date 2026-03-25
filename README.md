@@ -97,6 +97,35 @@ DIST: 12.5m
 
 ---
 
+## 🖼️ Örnek Çıktılar
+
+<p align="center">
+  <img src="autonomous_driving/outputs/predictions/critical_front_car_decision_1.jpg" width="48%" />
+  <img src="autonomous_driving/outputs/predictions/critical_front_car_decision_2.jpg" width="48%" />
+</p>
+<p align="center">
+  <em>Ön araç risk analizi ve karar çıktıları</em>
+</p>
+
+<p align="center">
+  <img src="autonomous_driving/outputs/predictions/critical_front_car_decision_3.jpg" width="48%" />
+  <img src="autonomous_driving/outputs/predictions/critical_front_car_segmentation_debug.jpg" width="48%" />
+</p>
+<p align="center">
+  <em>Karar mekanizması ve segmentation/debug görünümü</em>
+</p>
+
+<p align="center">
+  <img src="autonomous_driving/outputs/predictions/notebook_result.jpg" width="48%" />
+  <img src="autonomous_driving/outputs/predictions/notebook_result_1.jpg" width="48%" />
+</p>
+<p align="center">
+  <em>Notebook üzerinden alınan örnek inference çıktıları</em>
+</p>
+
+
+---
+
 ## 📊 Dataset
 
 Bu projede **BDD100K (Berkeley DeepDrive 100K)** veri seti kullanılmıştır.  
