@@ -94,6 +94,25 @@ RISK: CRITICAL
 REASON: RED_LIGHT
 DIST: 12.5m
 ```
+---
+
+## 📈 Model Performansı
+
+Eğitim sürecine ait bazı performans metrikleri aşağıda gösterilmektedir:
+
+<p align="center">
+  <img src="outputs/models/bdd_yolo_v14/results.png" width="60%" />
+</p>
+<p align="center">
+  <em>Eğitim sürecine ait genel performans metrikleri (loss, precision, recall)</em>
+</p>
+
+<p align="center">
+  <img src="outputs/models/bdd_yolo_v14/BoxR_curve.png" width="60%" />
+</p>
+<p align="center">
+  <em>Recall (duyarlılık) eğrisi</em>
+</p>
 
 ---
 
