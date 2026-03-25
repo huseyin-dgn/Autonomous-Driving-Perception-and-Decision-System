@@ -1,0 +1,18 @@
+===== SINIFLAR =====
+car: 815717
+lane: 604373
+traffic sign: 274594
+traffic light: 213002
+drivable area: 143704
+person: 104611
+truck: 34216
+bus: 13269
+bike: 8217
+rider: 5166
+motor: 3454
+train: 151
+
+===== ÖZET =====
+Toplam image kaydı: 79863
+Toplam annotation: 2220474
+Toplam benzersiz class: 12
