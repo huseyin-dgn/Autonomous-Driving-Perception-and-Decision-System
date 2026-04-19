@@ -142,6 +142,17 @@ Eğitim sürecine ait bazı performans metrikleri aşağıda gösterilmektedir:
   <em>Notebook üzerinden alınan örnek inference çıktıları</em>
 </p>
 
+---
+
+## Gazebo Entegrasyonu
+
+Bu görsel, projenin Gazebo tabanlı simülasyon ortamını göstermektedir. Amaç, geliştirilen otonom sürüş algılama ve karar verme sistemini kontrollü bir sanal sahnede test ederek gerçek dünya uygulamasına geçmeden önce sistem davranışlarını analiz etmektir.
+
+Gazebo entegrasyonu sayesinde araç, yol ve çevre etkileşimleri simüle edilerek perception-to-decision pipeline daha gerçekçi senaryolar üzerinde değerlendirilebilir. Bu yaklaşım, projenin yalnızca bir bilgisayarlı görü modeli olmaktan çıkıp simülasyon destekli bir otonom sürüş sistemi haline gelmesini sağlamaktadır.
+
+![Gazebo Entegrasyonu](autonomous_driving/gazebo/worlds/Ekran%20Görüntüsü%20-%202026-04-19%2001-09-39.png)
+
+> Şekil: Otonom sürüş sistemi için hazırlanan Gazebo simülasyon sahnesi.
 
 ---
 
