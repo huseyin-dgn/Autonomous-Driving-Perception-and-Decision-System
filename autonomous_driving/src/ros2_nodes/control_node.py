@@ -18,7 +18,7 @@ class ControlNode(Node):
         self.publisher.publish(msg)
 
 
-def main(args=None):
+def main(args=None) -> None:
     rclpy.init(args=args)
     node = ControlNode()
     try:
@@ -27,4 +27,5 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

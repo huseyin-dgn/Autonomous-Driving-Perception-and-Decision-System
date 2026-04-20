@@ -45,8 +45,7 @@ class DecisionNode(Node):
         self.publisher.publish(cmd)
         self.get_logger().info(f"Applied decision: {decision}", throttle_duration_sec=0.5)
 
-
-def main(args=None):
+def main(args=None) -> None:
     rclpy.init(args=args)
     node = DecisionNode()
     try:
@@ -55,4 +54,5 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

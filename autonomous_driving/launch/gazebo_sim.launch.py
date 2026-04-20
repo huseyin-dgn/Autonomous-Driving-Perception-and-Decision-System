@@ -8,7 +8,8 @@ from launch.actions import ExecuteProcess, SetEnvironmentVariable
 
 def generate_launch_description():
     pkg_share = Path(get_package_share_directory("autonomous_driving"))
-    world_path = pkg_share / "gazebo" / "worlds" / "test_world.sdf"
+
+    world_path = Path("/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/gazebo/worlds/adas_test_world.sdf")
     model_path = pkg_share / "gazebo" / "models"
 
     resource_paths = os.environ.get("GZ_SIM_RESOURCE_PATH", "")
@@ -16,7 +17,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", merged_resource_path),
-
         ExecuteProcess(
             cmd=["gz", "sim", "-r", str(world_path)],
             output="screen"

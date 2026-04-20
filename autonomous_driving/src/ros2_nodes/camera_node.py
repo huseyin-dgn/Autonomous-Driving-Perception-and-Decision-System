@@ -28,7 +28,7 @@ class CameraNode(Node):
             self.get_logger().error(f"Camera conversion failed: {e}")
 
 
-def main(args=None):
+def main(args=None) -> None:
     rclpy.init(args=args)
     node = CameraNode()
     try:
@@ -36,6 +36,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        cv2.destroyAllWindows()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
