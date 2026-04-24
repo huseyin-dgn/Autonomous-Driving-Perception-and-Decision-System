@@ -150,7 +150,7 @@ Bu görsel, projenin Gazebo tabanlı simülasyon ortamını göstermektedir. Ama
 
 Gazebo entegrasyonu sayesinde araç, yol ve çevre etkileşimleri simüle edilerek perception-to-decision pipeline daha gerçekçi senaryolar üzerinde değerlendirilebilir. Bu yaklaşım, projenin yalnızca bir bilgisayarlı görü modeli olmaktan çıkıp simülasyon destekli bir otonom sürüş sistemi haline gelmesini sağlamaktadır.
 
-![Gazebo Entegrasyonu](autonomous_driving/gazebo/worlds/Ekran Görüntüsü - 2026-04-24 21-52-34.png)
+![Gazebo Entegrasyonu](autonomous_driving/gazebo/worlds/Ekran%20Görüntüsü%20-%202026-04-24%2021-52-34.png)
 
 > Şekil: Otonom sürüş sistemi için hazırlanan Gazebo simülasyon sahnesi.
 
