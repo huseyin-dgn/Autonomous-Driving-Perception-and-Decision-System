@@ -16,7 +16,7 @@ setup(
             "launch/full_system.launch.py",
         ]),
         ("share/autonomous_driving/gazebo/worlds", [
-            "gazebo/worlds/test_world.sdf",
+            "gazebo/worlds/adas_test_world.sdf",
         ]),
         ("share/autonomous_driving/gazebo/models/vehicle_model", [
             "gazebo/models/vehicle_model/model.sdf",

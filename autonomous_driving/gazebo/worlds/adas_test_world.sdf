@@ -93,7 +93,7 @@
       <pose>0 0 -4.7999999999999998 0 0 0</pose>
     </include>
     <model name='prius_hybrid'>
-      <pose>278.07999999999998 -134.22 2.8599999999999999 0.019999999999999997 -1.7347234759768071e-18 0.9700000000000002</pose>
+      <pose>303.0 -116.0 3.0 0.019999999999999997 -1.7347234759768071e-18 0.9700000000000002</pose>
       <link name='chassis'>
         <inertial>
           <mass>1326</mass>
@@ -1001,27 +1001,35 @@
     </model>
     <include>
       <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
-      <name>suv</name>
-      <pose>280.73142746103321 -138.42186385819539 0.5 0 0 0</pose>
-    </include>
-
-    <include>
-      <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
       <name>suv_0</name>
-      <pose>287.0 -147.0 3.0 0 0 0</pose>
+      <pose>308.0 -125.0 3.0 0 0 0</pose>
     </include>
 
     <include>
       <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
       <name>suv_1</name>
-      <pose>288 -141.5 3.0 0 0 0</pose>
+      <pose>312.0 -120.0 3.0 0 0 0</pose>
     </include>
 
 <include>
   <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/actor - relative paths/2/model.sdf</uri>
   <name>person_1</name>
-  <pose>285 -141 3.0 0 0 0</pose>
+  <pose>310.0 -123.0 3.0 0 0 0</pose>
 </include>
+
+  <gui fullscreen="0">
+
+    <plugin filename="MinimalScene" name="3D View"/>
+
+    <plugin filename="ImageDisplay" name="Perception Camera">
+      <topic>/adas/perception/annotated_image</topic>
+      <width>1280</width>
+      <height>720</height>
+      <x>20</x>
+      <y>20</y>
+    </plugin>
+
+  </gui>
 
   </world>
 </sdf>
