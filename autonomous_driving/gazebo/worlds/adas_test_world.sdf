@@ -999,23 +999,41 @@
       <static>false</static>
       <self_collide>false</self_collide>
     </model>
-    <include>
-      <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
-      <name>suv_0</name>
-      <pose>308.0 -125.0 3.0 0 0 0</pose>
-    </include>
+      <include>
+        <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
+        <name>suv_0</name>
+        <pose>308.0 -125.0 3.0 0 0 0</pose>
+      </include>
 
-    <include>
-      <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
-      <name>suv_1</name>
-      <pose>312.0 -120.0 3.0 0 0 0</pose>
-    </include>
+      <include>
+        <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/suv/4</uri>
+        <name>suv_1</name>
+        <pose>314.0 -120.0 3.0 0 0 0</pose>
+      </include>
+      
+      <include>
+    <uri>file:///home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/gazebo/models/traffic_light_red_model/model.sdf</uri>
+    <name>traffic_light_red_1</name>
+    <pose>310.5 -121.0 3 0 0 0</pose>
+  </include>
 
-<include>
-  <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/actor - relative paths/2/model.sdf</uri>
-  <name>person_1</name>
-  <pose>310.0 -123.0 3.0 0 0 0</pose>
-</include>
+  <include>
+    <uri>file:///home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/gazebo/models/traffic_light_yellow_model/model.sdf</uri>
+    <name>traffic_light_yellow_1</name>
+    <pose>309.0 -123.0 3 0 0 0</pose>
+  </include>
+
+  <include>
+    <uri>file:///home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/gazebo/models/traffic_light_green_model/model.sdf</uri>
+    <name>traffic_light_green_1</name>
+    <pose>308.5 -121.0 3.0 0 0 0</pose>
+  </include>
+
+  <include>
+    <uri>file:///home/huseyindgn/.gz/fuel/fuel.gazebosim.org/openrobotics/models/actor - relative paths/2/model.sdf</uri>
+    <name>person_1</name>
+    <pose>310.0 -123.0 3.0 0 0 0</pose>
+  </include>
 
   <gui fullscreen="0">
 

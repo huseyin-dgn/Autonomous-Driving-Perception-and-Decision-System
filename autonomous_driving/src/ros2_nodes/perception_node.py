@@ -35,7 +35,7 @@ class PerceptionNode(Node):
         self.declare_parameter("vehicle_min_aspect", 0.8)
         self.declare_parameter("vehicle_max_aspect", 4.5)
 
-        self.declare_parameter("person_hold_frames", 15)
+        self.declare_parameter("person_hold_frames", 12)
         self.declare_parameter("show_debug", True)
 
         self.image_topic = self.get_parameter("image_topic").value
@@ -117,13 +117,56 @@ class PerceptionNode(Node):
         return label
 
     def is_vehicle(self, label):
-        return label in ["car"]
+        return label == "car"
 
     def is_person(self, label):
         return label == "person"
 
     def is_traffic(self, label):
         return label in ["traffic_light", "traffic_sign"]
+
+    def estimate_traffic_light_state(self, frame, bbox):
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+
+        x1 = max(0, min(w - 1, x1))
+        x2 = max(0, min(w - 1, x2))
+        y1 = max(0, min(h - 1, y1))
+        y2 = max(0, min(h - 1, y2))
+
+        if x2 <= x1 or y2 <= y1:
+            return "unknown"
+
+        roi = frame[y1:y2, x1:x2]
+
+        if roi.size == 0:
+            return "unknown"
+
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+        red_mask1 = cv2.inRange(hsv, (0, 80, 80), (10, 255, 255))
+        red_mask2 = cv2.inRange(hsv, (170, 80, 80), (180, 255, 255))
+        red_mask = red_mask1 + red_mask2
+
+        yellow_mask = cv2.inRange(hsv, (18, 80, 80), (35, 255, 255))
+        green_mask = cv2.inRange(hsv, (40, 60, 60), (90, 255, 255))
+
+        red_score = cv2.countNonZero(red_mask)
+        yellow_score = cv2.countNonZero(yellow_mask)
+        green_score = cv2.countNonZero(green_mask)
+
+        scores = {
+            "red": red_score,
+            "yellow": yellow_score,
+            "green": green_score,
+        }
+
+        state = max(scores, key=scores.get)
+
+        if scores[state] < 5:
+            return "unknown"
+
+        return state
 
     def pass_filter(self, det, frame_w, frame_h):
         label = det["label"]
@@ -172,7 +215,7 @@ class PerceptionNode(Node):
             return True
 
         return False
-    
+
     def apply_person_temporal_hold(self, detections):
         current_persons = [d for d in detections if d["label"] == "person"]
 
@@ -198,7 +241,7 @@ class PerceptionNode(Node):
             for det in self.last_person_detections:
                 copied = dict(det)
                 copied["held"] = True
-                copied["confidence"] *= 0.90
+                copied["confidence"] = max(0.01, copied["confidence"] * 0.90)
                 held.append(copied)
 
             self.person_missing_count += 1
@@ -207,7 +250,7 @@ class PerceptionNode(Node):
         self.last_person_detections = []
         self.person_missing_count = 0
         return detections
-    
+
     def remove_duplicate_detections(self, detections):
         vehicles = [d for d in detections if self.is_vehicle(d["label"])]
         others = [d for d in detections if not self.is_vehicle(d["label"])]
@@ -265,18 +308,32 @@ class PerceptionNode(Node):
             color = (255, 0, 0)
         elif label == "car":
             color = (0, 255, 0)
+        elif label == "traffic_light":
+            state = det.get("traffic_light_state", "unknown")
+
+            if state == "red":
+                color = (0, 0, 255)
+            elif state == "yellow":
+                color = (0, 255, 255)
+            elif state == "green":
+                color = (0, 255, 0)
+            else:
+                color = (0, 255, 255)
         else:
             color = (0, 255, 255)
 
-        thickness = 2
-        if held:
-            thickness = 1
+        thickness = 1 if held else 2
 
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
-        text = f"{label} {conf:.2f}"
+        if label == "traffic_light":
+            state = det.get("traffic_light_state", "unknown")
+            text = f"{label} {state} {conf:.2f}"
+        else:
+            text = f"{label} {conf:.2f}"
+
         if held:
-            text = f"{label} {conf:.2f} hold"
+            text = f"{text} hold"
 
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.55
@@ -304,8 +361,19 @@ class PerceptionNode(Node):
     def draw_status_panel(self, frame, detections):
         vehicles = len([d for d in detections if self.is_vehicle(d["label"])])
         persons = len([d for d in detections if self.is_person(d["label"])])
+        traffic_lights = len([d for d in detections if d["label"] == "traffic_light"])
 
-        panel_h = 90
+        states = [
+            d.get("traffic_light_state", "unknown")
+            for d in detections
+            if d["label"] == "traffic_light"
+        ]
+
+        state_text = "-"
+        if len(states) > 0:
+            state_text = ",".join(states)
+
+        panel_h = 110
         cv2.rectangle(frame, (0, 0), (frame.shape[1], panel_h), (85, 85, 85), -1)
 
         cv2.putText(
@@ -321,7 +389,7 @@ class PerceptionNode(Node):
 
         cv2.putText(
             frame,
-            f"vehicles={vehicles} persons={persons} total={len(detections)}",
+            f"vehicles={vehicles} persons={persons} traffic_lights={traffic_lights} total={len(detections)}",
             (15, 52),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -332,8 +400,19 @@ class PerceptionNode(Node):
 
         cv2.putText(
             frame,
-            f"model={self.model_path}",
+            f"traffic_light_state={state_text}",
             (15, 78),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.putText(
+            frame,
+            f"model={self.model_path}",
+            (15, 104),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.50,
             (255, 255, 255),
@@ -387,6 +466,12 @@ class PerceptionNode(Node):
                         "bbox": [float(x1), float(y1), float(x2), float(y2)],
                     }
 
+                    if label == "traffic_light":
+                        det["traffic_light_state"] = self.estimate_traffic_light_state(
+                            frame,
+                            det["bbox"],
+                        )
+
                     raw_detections.append(det)
 
                     if self.pass_filter(det, frame_w, frame_h):
@@ -422,7 +507,19 @@ class PerceptionNode(Node):
             cv2.imshow(self.window_name, annotated)
             cv2.waitKey(1)
 
-        clean_log = [(d["label"], round(d["confidence"], 2)) for d in clean_detections]
+        clean_log = []
+        for d in clean_detections:
+            if d["label"] == "traffic_light":
+                clean_log.append(
+                    (
+                        d["label"],
+                        d.get("traffic_light_state", "unknown"),
+                        round(d["confidence"], 2),
+                    )
+                )
+            else:
+                clean_log.append((d["label"], round(d["confidence"], 2)))
+
         self.get_logger().info(f"raw={len(raw_detections)} clean={clean_log}")
 
 
