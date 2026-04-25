@@ -3,6 +3,12 @@ import time
 
 import cv2
 import rclpy
+import torch
+import torch.nn as nn
+import torchvision.models as models
+import torchvision.transforms as transforms
+
+from PIL import Image as PILImage
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -18,6 +24,18 @@ class PerceptionNode(Node):
         self.declare_parameter("detections_topic", "/adas/perception/detections_json")
         self.declare_parameter("annotated_topic", "/adas/perception/annotated_image")
         self.declare_parameter("model_path", "yolov8n.pt")
+
+        self.declare_parameter(
+            "sign_classifier_path",
+            "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/sign_classifier/outputs/sign_classifier_resnet18_best.pt",
+        )
+        self.declare_parameter(
+            "sign_class_names_path",
+            "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/sign_classifier/outputs/class_names.json",
+        )
+        self.declare_parameter("sign_classifier_enabled", True)
+        self.declare_parameter("sign_classifier_min_conf", 0.25)
+        self.declare_parameter("sign_crop_padding_ratio", 0.20)
 
         self.declare_parameter("conf_threshold", 0.20)
         self.declare_parameter("iou_threshold", 0.45)
@@ -43,6 +61,12 @@ class PerceptionNode(Node):
         self.annotated_topic = self.get_parameter("annotated_topic").value
         self.model_path = self.get_parameter("model_path").value
 
+        self.sign_classifier_path = self.get_parameter("sign_classifier_path").value
+        self.sign_class_names_path = self.get_parameter("sign_class_names_path").value
+        self.sign_classifier_enabled = bool(self.get_parameter("sign_classifier_enabled").value)
+        self.sign_classifier_min_conf = float(self.get_parameter("sign_classifier_min_conf").value)
+        self.sign_crop_padding_ratio = float(self.get_parameter("sign_crop_padding_ratio").value)
+
         self.conf_threshold = float(self.get_parameter("conf_threshold").value)
         self.iou_threshold = float(self.get_parameter("iou_threshold").value)
         self.max_det = int(self.get_parameter("max_det").value)
@@ -64,6 +88,21 @@ class PerceptionNode(Node):
 
         self.bridge = CvBridge()
         self.model = YOLO(self.model_path)
+
+        self.torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.sign_model = None
+        self.sign_class_names = []
+        self.sign_transform = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225],
+            ),
+        ])
+
+        if self.sign_classifier_enabled:
+            self.load_sign_classifier()
 
         self.last_person_detections = []
         self.person_missing_count = 0
@@ -98,6 +137,38 @@ class PerceptionNode(Node):
         self.get_logger().info(f"annotated_topic={self.annotated_topic}")
         self.get_logger().info(f"model_path={self.model_path}")
         self.get_logger().info(f"base_conf={self.conf_threshold} iou={self.iou_threshold}")
+        self.get_logger().info(f"sign_classifier_enabled={self.sign_classifier_enabled}")
+        self.get_logger().info(f"sign_classifier_path={self.sign_classifier_path}")
+
+    def load_sign_classifier(self):
+        try:
+            checkpoint = torch.load(self.sign_classifier_path, map_location=self.torch_device)
+
+            if "class_names" in checkpoint:
+                self.sign_class_names = checkpoint["class_names"]
+            else:
+                with open(self.sign_class_names_path, "r", encoding="utf-8") as f:
+                    self.sign_class_names = json.load(f)
+
+            num_classes = len(self.sign_class_names)
+
+            self.sign_model = models.resnet18(weights=None)
+            self.sign_model.fc = nn.Sequential(
+                nn.Dropout(0.30),
+                nn.Linear(self.sign_model.fc.in_features, num_classes),
+            )
+
+            self.sign_model.load_state_dict(checkpoint["model_state_dict"])
+            self.sign_model.to(self.torch_device)
+            self.sign_model.eval()
+
+            self.get_logger().info("traffic sign classifier yüklendi")
+            self.get_logger().info(f"sign classes={self.sign_class_names}")
+
+        except Exception as exc:
+            self.sign_classifier_enabled = False
+            self.sign_model = None
+            self.get_logger().error(f"traffic sign classifier yüklenemedi: {exc}")
 
     def normalize_label(self, label):
         label = str(label).lower().strip()
@@ -115,6 +186,30 @@ class PerceptionNode(Node):
             return "traffic_sign"
 
         return label
+
+    def pretty_sign_name(self, sign_type):
+        names = {
+            "dikkat": "Dikkat",
+            "dur": "Dur",
+            "duraklamak_park_yasaktir": "Duraklamak/Park Yasak",
+            "girisi_olmayan_yol": "Girisi Olmayan Yol",
+            "hiz_siniri_20": "Hiz Siniri 20",
+            "hiz_siniri_30": "Hiz Siniri 30",
+            "hiz_siniri_40": "Hiz Siniri 40",
+            "hiz_siniri_50": "Hiz Siniri 50",
+            "isikli_isaret_cihazi": "Isikli Isaret Cihazi",
+            "okul_gecidi": "Okul Gecidi",
+            "park_etmek_yasaktir": "Park Yasak",
+            "saga_donulmez": "Saga Donulmez",
+            "sola_donulmez": "Sola Donulmez",
+            "tasit_giremez": "Tasit Giremez",
+            "yaya_gecidi": "Yaya Gecidi",
+            "yol_calismasi": "Yol Calismasi",
+            "yol_ver": "Yol Ver",
+            "unknown": "Bilinmiyor",
+        }
+
+        return names.get(sign_type, sign_type)
 
     def is_vehicle(self, label):
         return label == "car"
@@ -167,6 +262,52 @@ class PerceptionNode(Node):
             return "unknown"
 
         return state
+
+    def classify_traffic_sign(self, frame, bbox):
+        if not self.sign_classifier_enabled or self.sign_model is None:
+            return "unknown", 0.0
+
+        h, w = frame.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+
+        bw = max(1, x2 - x1)
+        bh = max(1, y2 - y1)
+
+        pad_x = int(bw * self.sign_crop_padding_ratio)
+        pad_y = int(bh * self.sign_crop_padding_ratio)
+
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(w - 1, x2 + pad_x)
+        y2 = min(h - 1, y2 + pad_y)
+
+        if x2 <= x1 or y2 <= y1:
+            return "unknown", 0.0
+
+        crop = frame[y1:y2, x1:x2]
+
+        if crop.size == 0:
+            return "unknown", 0.0
+
+        try:
+            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            pil_img = PILImage.fromarray(crop_rgb)
+
+            tensor = self.sign_transform(pil_img).unsqueeze(0).to(self.torch_device)
+
+            with torch.no_grad():
+                logits = self.sign_model(tensor)
+                probs = torch.softmax(logits, dim=1)
+                conf, pred_idx = torch.max(probs, dim=1)
+
+            sign_type = self.sign_class_names[int(pred_idx.item())]
+            sign_conf = float(conf.item())
+
+            return sign_type, sign_conf
+
+        except Exception as exc:
+            self.get_logger().error(f"traffic sign classify hata: {exc}")
+            return "unknown", 0.0
 
     def pass_filter(self, det, frame_w, frame_h):
         label = det["label"]
@@ -319,6 +460,8 @@ class PerceptionNode(Node):
                 color = (0, 255, 0)
             else:
                 color = (0, 255, 255)
+        elif label == "traffic_sign":
+            color = (0, 255, 255)
         else:
             color = (0, 255, 255)
 
@@ -329,6 +472,15 @@ class PerceptionNode(Node):
         if label == "traffic_light":
             state = det.get("traffic_light_state", "unknown")
             text = f"{label} {state} {conf:.2f}"
+        elif label == "traffic_sign":
+            sign_type = det.get("sign_type", "unknown")
+            sign_conf = det.get("sign_confidence", 0.0)
+            pretty_name = self.pretty_sign_name(sign_type)
+
+            if sign_type != "unknown":
+                text = f"LEVHA: {pretty_name} {sign_conf:.2f}"
+            else:
+                text = f"LEVHA: Bilinmiyor {conf:.2f}"
         else:
             text = f"{label} {conf:.2f}"
 
@@ -362,6 +514,7 @@ class PerceptionNode(Node):
         vehicles = len([d for d in detections if self.is_vehicle(d["label"])])
         persons = len([d for d in detections if self.is_person(d["label"])])
         traffic_lights = len([d for d in detections if d["label"] == "traffic_light"])
+        traffic_signs = len([d for d in detections if d["label"] == "traffic_sign"])
 
         states = [
             d.get("traffic_light_state", "unknown")
@@ -369,11 +522,21 @@ class PerceptionNode(Node):
             if d["label"] == "traffic_light"
         ]
 
+        signs = [
+            self.pretty_sign_name(d.get("sign_type", "unknown"))
+            for d in detections
+            if d["label"] == "traffic_sign"
+        ]
+
         state_text = "-"
         if len(states) > 0:
             state_text = ",".join(states)
 
-        panel_h = 110
+        sign_text = "-"
+        if len(signs) > 0:
+            sign_text = ",".join(signs[:3])
+
+        panel_h = 135
         cv2.rectangle(frame, (0, 0), (frame.shape[1], panel_h), (85, 85, 85), -1)
 
         cv2.putText(
@@ -389,7 +552,7 @@ class PerceptionNode(Node):
 
         cv2.putText(
             frame,
-            f"vehicles={vehicles} persons={persons} traffic_lights={traffic_lights} total={len(detections)}",
+            f"vehicles={vehicles} persons={persons} traffic_lights={traffic_lights} traffic_signs={traffic_signs} total={len(detections)}",
             (15, 52),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
@@ -411,8 +574,19 @@ class PerceptionNode(Node):
 
         cv2.putText(
             frame,
-            f"model={self.model_path}",
+            f"traffic_sign_type={sign_text}",
             (15, 104),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+        cv2.putText(
+            frame,
+            f"model={self.model_path}",
+            (15, 130),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.50,
             (255, 255, 255),
@@ -472,6 +646,15 @@ class PerceptionNode(Node):
                             det["bbox"],
                         )
 
+                    if label == "traffic_sign":
+                        sign_type, sign_confidence = self.classify_traffic_sign(
+                            frame,
+                            det["bbox"],
+                        )
+                        det["sign_type"] = sign_type
+                        det["sign_confidence"] = sign_confidence
+                        det["sign_name"] = self.pretty_sign_name(sign_type)
+
                     raw_detections.append(det)
 
                     if self.pass_filter(det, frame_w, frame_h):
@@ -514,6 +697,15 @@ class PerceptionNode(Node):
                     (
                         d["label"],
                         d.get("traffic_light_state", "unknown"),
+                        round(d["confidence"], 2),
+                    )
+                )
+            elif d["label"] == "traffic_sign":
+                clean_log.append(
+                    (
+                        d["label"],
+                        d.get("sign_type", "unknown"),
+                        round(d.get("sign_confidence", 0.0), 2),
                         round(d["confidence"], 2),
                     )
                 )

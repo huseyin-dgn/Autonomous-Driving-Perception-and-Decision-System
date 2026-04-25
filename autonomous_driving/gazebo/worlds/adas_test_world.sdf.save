@@ -1008,7 +1008,7 @@
       <include>
         <uri>https://fuel.gazebosim.org/1.0/openrobotics/models/suv/4</uri>
         <name>suv_1</name>
-        <pose>316.0 -122.0 3.0 0 0 0</pose>
+        <pose>314.0 -120.0 3.0 0 0 0</pose>
       </include>
       
       <include>
@@ -1051,15 +1051,12 @@
 </include>
 
 <include>
-  <uri>model://speed30_new</uri>
-  <name>speed30_new_1</name>
-  <pose>315.0 -118.0 3.0 0 0 0</pose>
+  <uri>model://speed30_new</uri> 
+  <name>stop_sign_1</name>
+  <pose>311.0 -120.0 3.0 0 0 0</pose>
 </include>
 
 <include>
-  <uri>model://stop_sign_model</uri>
-  <name>stop_sign_1</name>
-  <pose>320.0  -117.0 3.0 0 0 0</pose>
-</include>
-  </world>
-</sdf>
+  <uri>model://speed_limit_30_model</uri>
+  <name>speed_limit_30_1</name>
+  <pose>307.0 -121.5 3.0 0 0 0</pose>

@@ -1,0 +1,63 @@
+<?xml version="1.0"?>
+<sdf version="1.9">
+  <model name="speed30_new">
+    <static>true</static>
+
+    <link name="speed30_link">
+
+      <visual name="pole_visual">
+        <pose>0 0 1.10 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.03</radius>
+            <length>2.20</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.45 0.45 0.45 1</ambient>
+          <diffuse>0.45 0.45 0.45 1</diffuse>
+        </material>
+      </visual>
+
+      <collision name="pole_collision">
+        <pose>0 0 1.10 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.03</radius>
+            <length>2.20</length>
+          </cylinder>
+        </geometry>
+      </collision>
+
+      <visual name="sign_panel">
+        <pose>0 0 2.25 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.02 0.80 0.80</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <pbr>
+            <metal>
+              <albedo_map>model://speed30_new/materials/textures/speed_limit_30.png</albedo_map>
+              <roughness>0.5</roughness>
+              <metalness>0.0</metalness>
+            </metal>
+          </pbr>
+        </material>
+      </visual>
+
+      <collision name="sign_collision">
+        <pose>0 0 2.25 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.03 0.80 0.80</size>
+          </box>
+        </geometry>
+      </collision>
+
+    </link>
+  </model>
+</sdf>

@@ -1,0 +1,13 @@
+material SpeedLimit30
+{
+  technique
+  {
+    pass
+    {
+      texture_unit
+      {
+        texture speed30.png
+      }
+    }
+  }
+}
