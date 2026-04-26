@@ -2,6 +2,7 @@ import json
 import time
 
 import cv2
+import numpy as np
 import rclpy
 import torch
 import torch.nn as nn
@@ -23,6 +24,7 @@ class PerceptionNode(Node):
         self.declare_parameter("image_topic", "/adas/camera/front/image_raw")
         self.declare_parameter("detections_topic", "/adas/perception/detections_json")
         self.declare_parameter("annotated_topic", "/adas/perception/annotated_image")
+        self.declare_parameter("decision_topic", "/adas/decision")
         self.declare_parameter("model_path", "yolov8n.pt")
 
         self.declare_parameter(
@@ -59,6 +61,7 @@ class PerceptionNode(Node):
         self.image_topic = self.get_parameter("image_topic").value
         self.detections_topic = self.get_parameter("detections_topic").value
         self.annotated_topic = self.get_parameter("annotated_topic").value
+        self.decision_topic = self.get_parameter("decision_topic").value
         self.model_path = self.get_parameter("model_path").value
 
         self.sign_classifier_path = self.get_parameter("sign_classifier_path").value
@@ -86,12 +89,25 @@ class PerceptionNode(Node):
         self.person_hold_frames = int(self.get_parameter("person_hold_frames").value)
         self.show_debug = bool(self.get_parameter("show_debug").value)
 
+        self.latest_decision = {
+            "decision": "-",
+            "risk": "-",
+            "target_speed": "-",
+            "reason": "-",
+            "traffic_light_state": "-",
+            "speed_limit_active": "-",
+            "distance_est": None,
+            "active_sign": None,
+            "person_risk": "-",
+        }
+
         self.bridge = CvBridge()
         self.model = YOLO(self.model_path)
 
         self.torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.sign_model = None
         self.sign_class_names = []
+
         self.sign_transform = transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.ToTensor(),
@@ -107,12 +123,19 @@ class PerceptionNode(Node):
         self.last_person_detections = []
         self.person_missing_count = 0
 
-        self.window_name = "ADAS PERCEPTION DEBUG"
+        self.window_name = "ADAS PERCEPTION + DECISION DEBUG"
 
         self.sub = self.create_subscription(
             Image,
             self.image_topic,
             self.image_callback,
+            10,
+        )
+
+        self.decision_sub = self.create_subscription(
+            String,
+            self.decision_topic,
+            self.decision_callback,
             10,
         )
 
@@ -130,15 +153,21 @@ class PerceptionNode(Node):
 
         if self.show_debug:
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+            cv2.resizeWindow(self.window_name, 1400, 800)
 
         self.get_logger().info("perception_node başladı")
         self.get_logger().info(f"image_topic={self.image_topic}")
         self.get_logger().info(f"detections_topic={self.detections_topic}")
         self.get_logger().info(f"annotated_topic={self.annotated_topic}")
+        self.get_logger().info(f"decision_topic={self.decision_topic}")
         self.get_logger().info(f"model_path={self.model_path}")
-        self.get_logger().info(f"base_conf={self.conf_threshold} iou={self.iou_threshold}")
         self.get_logger().info(f"sign_classifier_enabled={self.sign_classifier_enabled}")
-        self.get_logger().info(f"sign_classifier_path={self.sign_classifier_path}")
+
+    def decision_callback(self, msg):
+        try:
+            self.latest_decision = json.loads(msg.data)
+        except Exception as exc:
+            self.get_logger().warn(f"decision JSON parse hata: {exc}")
 
     def load_sign_classifier(self):
         try:
@@ -466,7 +495,6 @@ class PerceptionNode(Node):
             color = (0, 255, 255)
 
         thickness = 1 if held else 2
-
         cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
 
         if label == "traffic_light":
@@ -488,7 +516,7 @@ class PerceptionNode(Node):
             text = f"{text} hold"
 
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.55
+        font_scale = 0.50
         font_thickness = 2
 
         (tw, th), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
@@ -510,7 +538,28 @@ class PerceptionNode(Node):
             cv2.LINE_AA,
         )
 
-    def draw_status_panel(self, frame, detections):
+    def draw_text(self, frame, text, x, y, color=(255, 255, 255), scale=0.52, thickness=2):
+        cv2.putText(
+            frame,
+            str(text),
+            (x, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            scale,
+            color,
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    def make_debug_canvas(self, frame, detections):
+        h, w = frame.shape[:2]
+        panel_w = 470
+
+        canvas = np.zeros((h, w + panel_w, 3), dtype=np.uint8)
+        canvas[:, :w] = frame
+
+        panel = canvas[:, w:w + panel_w]
+        panel[:, :] = (45, 45, 45)
+
         vehicles = len([d for d in detections if self.is_vehicle(d["label"])])
         persons = len([d for d in detections if self.is_person(d["label"])])
         traffic_lights = len([d for d in detections if d["label"] == "traffic_light"])
@@ -528,71 +577,64 @@ class PerceptionNode(Node):
             if d["label"] == "traffic_sign"
         ]
 
-        state_text = "-"
-        if len(states) > 0:
-            state_text = ",".join(states)
+        state_text = ",".join(states) if len(states) > 0 else "-"
+        sign_text = ",".join(signs[:4]) if len(signs) > 0 else "-"
 
-        sign_text = "-"
-        if len(signs) > 0:
-            sign_text = ",".join(signs[:3])
+        decision = self.latest_decision.get("decision", "-")
+        risk = self.latest_decision.get("risk", "-")
+        target_speed = self.latest_decision.get("target_speed", "-")
+        reason = self.latest_decision.get("reason", "-")
+        distance_est = self.latest_decision.get("distance_est", "-")
+        traffic_light_state = self.latest_decision.get("traffic_light_state", "-")
+        person_risk = self.latest_decision.get("person_risk", "-")
 
-        panel_h = 135
-        cv2.rectangle(frame, (0, 0), (frame.shape[1], panel_h), (85, 85, 85), -1)
+        active_sign = self.latest_decision.get("active_sign")
+        active_sign_name = "-"
+        active_sign_type = "-"
 
-        cv2.putText(
-            frame,
-            "ADAS PERCEPTION DEBUG",
-            (15, 25),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        if active_sign:
+            active_sign_name = active_sign.get("sign_name", "-")
+            active_sign_type = active_sign.get("sign_type", "-")
 
-        cv2.putText(
-            frame,
-            f"vehicles={vehicles} persons={persons} traffic_lights={traffic_lights} traffic_signs={traffic_signs} total={len(detections)}",
-            (15, 52),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        if decision == "STOP":
+            decision_color = (0, 0, 255)
+        elif decision == "SLOW":
+            decision_color = (0, 255, 255)
+        elif decision == "GO":
+            decision_color = (0, 255, 0)
+        else:
+            decision_color = (255, 255, 255)
 
-        cv2.putText(
-            frame,
-            f"traffic_light_state={state_text}",
-            (15, 78),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        px = w + 20
 
-        cv2.putText(
-            frame,
-            f"traffic_sign_type={sign_text}",
-            (15, 104),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        self.draw_text(canvas, "ADAS DEBUG PANEL", px, 35, (255, 255, 255), 0.70, 2)
 
-        cv2.putText(
-            frame,
-            f"model={self.model_path}",
-            (15, 130),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.50,
-            (255, 255, 255),
-            2,
-            cv2.LINE_AA,
-        )
+        self.draw_text(canvas, "DETECTION", px, 80, (200, 200, 200), 0.58, 2)
+        self.draw_text(canvas, f"Vehicles      : {vehicles}", px, 112)
+        self.draw_text(canvas, f"Persons       : {persons}", px, 140)
+        self.draw_text(canvas, f"TrafficLight  : {traffic_lights}", px, 168)
+        self.draw_text(canvas, f"TrafficSign   : {traffic_signs}", px, 196)
+        self.draw_text(canvas, f"Light States  : {state_text}", px, 224)
+        self.draw_text(canvas, f"Signs         : {sign_text}", px, 252, (255, 255, 255), 0.45, 1)
+
+        cv2.line(canvas, (w + 15, 280), (w + panel_w - 15, 280), (100, 100, 100), 1)
+
+        self.draw_text(canvas, "DECISION", px, 320, (200, 200, 200), 0.58, 2)
+        self.draw_text(canvas, f"Decision      : {decision}", px, 360, decision_color, 0.75, 2)
+        self.draw_text(canvas, f"Risk          : {risk}", px, 395, decision_color, 0.60, 2)
+        self.draw_text(canvas, f"Target Speed  : {target_speed}", px, 425)
+        self.draw_text(canvas, f"Front Dist    : {distance_est}", px, 455)
+        self.draw_text(canvas, f"Rule          : {reason}", px, 485, (255, 255, 255), 0.45, 1)
+
+        cv2.line(canvas, (w + 15, 515), (w + panel_w - 15, 515), (100, 100, 100), 1)
+
+        self.draw_text(canvas, "ACTIVE INPUTS", px, 555, (200, 200, 200), 0.58, 2)
+        self.draw_text(canvas, f"Light         : {traffic_light_state}", px, 590)
+        self.draw_text(canvas, f"Sign          : {active_sign_name}", px, 620, (255, 255, 255), 0.48, 1)
+        self.draw_text(canvas, f"Sign Type     : {active_sign_type}", px, 648, (255, 255, 255), 0.45, 1)
+        self.draw_text(canvas, f"Person Risk   : {person_risk}", px, 676)
+
+        return canvas
 
     def image_callback(self, msg):
         try:
@@ -666,7 +708,7 @@ class PerceptionNode(Node):
         for det in clean_detections:
             self.draw_detection(annotated, det)
 
-        self.draw_status_panel(annotated, clean_detections)
+        debug_canvas = self.make_debug_canvas(annotated, clean_detections)
 
         payload = {
             "stamp": time.time(),
@@ -680,39 +722,15 @@ class PerceptionNode(Node):
         self.det_pub.publish(msg_out)
 
         try:
-            annotated_msg = self.bridge.cv2_to_imgmsg(annotated, encoding="bgr8")
+            annotated_msg = self.bridge.cv2_to_imgmsg(debug_canvas, encoding="bgr8")
             annotated_msg.header = msg.header
             self.annotated_pub.publish(annotated_msg)
         except Exception as exc:
             self.get_logger().error(f"annotated image publish hata: {exc}")
 
         if self.show_debug:
-            cv2.imshow(self.window_name, annotated)
+            cv2.imshow(self.window_name, debug_canvas)
             cv2.waitKey(1)
-
-        clean_log = []
-        for d in clean_detections:
-            if d["label"] == "traffic_light":
-                clean_log.append(
-                    (
-                        d["label"],
-                        d.get("traffic_light_state", "unknown"),
-                        round(d["confidence"], 2),
-                    )
-                )
-            elif d["label"] == "traffic_sign":
-                clean_log.append(
-                    (
-                        d["label"],
-                        d.get("sign_type", "unknown"),
-                        round(d.get("sign_confidence", 0.0), 2),
-                        round(d["confidence"], 2),
-                    )
-                )
-            else:
-                clean_log.append((d["label"], round(d["confidence"], 2)))
-
-        self.get_logger().info(f"raw={len(raw_detections)} clean={clean_log}")
 
 
 def main(args=None):

@@ -29,6 +29,17 @@ class DecisionNode(Node):
         self.declare_parameter("ignore_right_edge_ratio", 0.88)
         self.declare_parameter("max_missing_front", 3)
 
+        self.declare_parameter("default_go_speed", 1.5)
+        self.declare_parameter("slow_speed", 0.8)
+        self.declare_parameter("stop_speed", 0.0)
+
+        self.declare_parameter("person_conf_threshold", 0.25)
+        self.declare_parameter("traffic_light_conf_threshold", 0.40)
+        self.declare_parameter("traffic_sign_conf_threshold", 0.20)
+        self.declare_parameter("sign_classifier_conf_threshold", 0.25)
+
+        self.declare_parameter("near_person_bottom_ratio", 0.35)
+
         self.detections_topic = self.get_parameter("detections_topic").value
         self.decision_topic = self.get_parameter("decision_topic").value
 
@@ -50,10 +61,53 @@ class DecisionNode(Node):
         self.ignore_right_edge_ratio = float(self.get_parameter("ignore_right_edge_ratio").value)
         self.max_missing_front = int(self.get_parameter("max_missing_front").value)
 
+        self.default_go_speed = float(self.get_parameter("default_go_speed").value)
+        self.slow_speed = float(self.get_parameter("slow_speed").value)
+        self.stop_speed = float(self.get_parameter("stop_speed").value)
+
+        self.person_conf_threshold = float(self.get_parameter("person_conf_threshold").value)
+        self.traffic_light_conf_threshold = float(self.get_parameter("traffic_light_conf_threshold").value)
+        self.traffic_sign_conf_threshold = float(self.get_parameter("traffic_sign_conf_threshold").value)
+        self.sign_classifier_conf_threshold = float(self.get_parameter("sign_classifier_conf_threshold").value)
+
+        self.near_person_bottom_ratio = float(self.get_parameter("near_person_bottom_ratio").value)
+
         self.vehicle_labels = {"car", "truck", "bus"}
+
+        self.stop_signs = {
+            "dur",
+            "girisi_olmayan_yol",
+            "tasit_giremez",
+        }
+
+        self.slow_signs = {
+            "yaya_gecidi",
+            "okul_gecidi",
+            "yol_calismasi",
+            "dikkat",
+            "yol_ver",
+        }
+
+        self.warning_signs = {
+            "saga_donulmez",
+            "sola_donulmez",
+            "park_etmek_yasaktir",
+            "duraklamak_park_yasaktir",
+            "isikli_isaret_cihazi",
+        }
+
+        self.speed_limit_map = {
+            "hiz_siniri_20": 0.5,
+            "hiz_siniri_30": 0.8,
+            "hiz_siniri_40": 1.0,
+            "hiz_siniri_50": 1.2,
+        }
 
         self.last_front_vehicle = None
         self.missing_front_count = 0
+
+        self.last_speed_limit_sign = None
+        self.current_speed_limit = None
 
         self.sub = self.create_subscription(String, self.detections_topic, self.callback, 10)
         self.pub = self.create_publisher(String, self.decision_topic, 10)
@@ -169,19 +223,98 @@ class DecisionNode(Node):
         candidates.sort(key=lambda item: item[0], reverse=True)
         return candidates[0][1]
 
-    def callback(self, msg):
-        try:
-            data = json.loads(msg.data)
-        except Exception as exc:
-            self.get_logger().warn(f"JSON parse hatası: {exc}")
-            return
+    def get_best_traffic_light_state(self, detections):
+        candidates = []
 
-        frame_width = int(data.get("frame_width", 800))
-        frame_height = int(data.get("frame_height", 800))
-        detections = data.get("detections", [])
+        for det in detections:
+            if det.get("label") != "traffic_light":
+                continue
 
-        front_vehicle = self.select_front_vehicle(detections, frame_width, frame_height)
+            conf = float(det.get("confidence", 0.0))
+            if conf < self.traffic_light_conf_threshold:
+                continue
 
+            state = det.get("traffic_light_state", "unknown")
+            if state not in ["red", "yellow", "green"]:
+                continue
+
+            priority = {
+                "red": 3,
+                "yellow": 2,
+                "green": 1,
+            }.get(state, 0)
+
+            candidates.append((priority, conf, state, det))
+
+        if not candidates:
+            return "unknown", None
+
+        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return candidates[0][2], candidates[0][3]
+
+    def get_best_sign(self, detections):
+        candidates = []
+
+        for det in detections:
+            if det.get("label") != "traffic_sign":
+                continue
+
+            yolo_conf = float(det.get("confidence", 0.0))
+            sign_type = det.get("sign_type", "unknown")
+            sign_conf = float(det.get("sign_confidence", 0.0))
+
+            if yolo_conf < self.traffic_sign_conf_threshold:
+                continue
+
+            if sign_type == "unknown":
+                continue
+
+            if sign_conf < self.sign_classifier_conf_threshold:
+                continue
+
+            score = sign_conf * 2.0 + yolo_conf
+            candidates.append((score, det))
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
+
+    def get_person_risk(self, detections, frame_height):
+        risky_persons = []
+
+        for det in detections:
+            if det.get("label") != "person":
+                continue
+
+            conf = float(det.get("confidence", 0.0))
+            if conf < self.person_conf_threshold:
+                continue
+
+            bbox = det.get("bbox")
+            if bbox is None or len(bbox) != 4:
+                continue
+
+            x1, y1, x2, y2 = map(float, bbox)
+            bottom_ratio = y2 / float(frame_height)
+
+            copied = dict(det)
+            copied["bottom_ratio"] = bottom_ratio
+            risky_persons.append(copied)
+
+        if not risky_persons:
+            return "none", None
+
+        risky_persons.sort(key=lambda d: d["bottom_ratio"], reverse=True)
+        nearest = risky_persons[0]
+
+        if nearest["bottom_ratio"] >= self.near_person_bottom_ratio:
+            return "near", nearest
+
+        return "far", nearest
+
+    def apply_front_vehicle_memory(self, front_vehicle):
         used_memory = False
 
         if front_vehicle is not None:
@@ -199,39 +332,224 @@ class DecisionNode(Node):
             else:
                 self.last_front_vehicle = None
 
+        return front_vehicle, used_memory
+
+    def evaluate_vehicle_rule(self, front_vehicle, used_memory):
         if front_vehicle is None:
-            decision = "GO"
-            risk = "LOW"
-            distance_est = None
-            reason = "front_vehicle_not_found"
-        else:
-            distance_est = float(front_vehicle["distance_est"])
+            return {
+                "decision": "GO",
+                "risk": "LOW",
+                "target_speed": self.default_go_speed,
+                "distance_est": None,
+                "reason": "front_vehicle_not_found",
+            }
 
-            if distance_est <= self.stop_distance:
-                decision = "STOP"
-                risk = "HIGH"
-            elif distance_est <= self.slow_distance:
-                decision = "SLOW"
-                risk = "MEDIUM"
-            else:
-                decision = "GO"
-                risk = "LOW"
+        distance_est = float(front_vehicle["distance_est"])
 
-            reason = "front_vehicle_selected_from_memory" if used_memory else "front_vehicle_selected"
+        if distance_est <= self.stop_distance:
+            return {
+                "decision": "STOP",
+                "risk": "HIGH",
+                "target_speed": self.stop_speed,
+                "distance_est": distance_est,
+                "reason": "front_vehicle_too_close_memory" if used_memory else "front_vehicle_too_close",
+            }
+
+        if distance_est <= self.slow_distance:
+            return {
+                "decision": "SLOW",
+                "risk": "MEDIUM",
+                "target_speed": self.slow_speed,
+                "distance_est": distance_est,
+                "reason": "front_vehicle_near_memory" if used_memory else "front_vehicle_near",
+            }
+
+        return {
+            "decision": "GO",
+            "risk": "LOW",
+            "target_speed": self.default_go_speed,
+            "distance_est": distance_est,
+            "reason": "front_vehicle_safe",
+        }
+
+    def build_rule_decision(
+        self,
+        vehicle_rule,
+        traffic_light_state,
+        traffic_light_det,
+        active_sign,
+        person_risk,
+        active_person,
+    ):
+        active_sign_type = None
+        active_sign_name = None
+        sign_confidence = None
+
+        if active_sign is not None:
+            active_sign_type = active_sign.get("sign_type", "unknown")
+            active_sign_name = active_sign.get("sign_name", active_sign_type)
+            sign_confidence = float(active_sign.get("sign_confidence", 0.0))
+
+        if active_sign_type in self.speed_limit_map:
+            self.current_speed_limit = self.speed_limit_map[active_sign_type]
+            self.last_speed_limit_sign = active_sign_type
+
+        if traffic_light_state == "red":
+            return {
+                "decision": "STOP",
+                "risk": "HIGH",
+                "target_speed": self.stop_speed,
+                "reason": "red_light_detected",
+            }
+
+        if active_sign_type in self.stop_signs:
+            return {
+                "decision": "STOP",
+                "risk": "HIGH",
+                "target_speed": self.stop_speed,
+                "reason": f"stop_sign_detected:{active_sign_type}",
+            }
+
+        if person_risk == "near":
+            return {
+                "decision": "STOP",
+                "risk": "HIGH",
+                "target_speed": self.stop_speed,
+                "reason": "near_person_detected",
+            }
+
+        if traffic_light_state == "yellow":
+            return {
+                "decision": "SLOW",
+                "risk": "MEDIUM",
+                "target_speed": self.slow_speed,
+                "reason": "yellow_light_detected",
+            }
+
+        if active_sign_type in self.slow_signs:
+            return {
+                "decision": "SLOW",
+                "risk": "MEDIUM",
+                "target_speed": self.slow_speed,
+                "reason": f"slow_sign_detected:{active_sign_type}",
+            }
+
+        if person_risk == "far":
+            return {
+                "decision": "SLOW",
+                "risk": "MEDIUM",
+                "target_speed": self.slow_speed,
+                "reason": "person_detected",
+            }
+
+        if vehicle_rule["decision"] in ["STOP", "SLOW"]:
+            return vehicle_rule
+
+        if self.current_speed_limit is not None:
+            return {
+                "decision": "GO",
+                "risk": "LOW",
+                "target_speed": min(self.default_go_speed, self.current_speed_limit),
+                "reason": f"speed_limit_active:{self.last_speed_limit_sign}",
+            }
+
+        if active_sign_type in self.warning_signs:
+            return {
+                "decision": "GO",
+                "risk": "LOW",
+                "target_speed": self.default_go_speed,
+                "reason": f"warning_sign_detected:{active_sign_type}",
+            }
+
+        if traffic_light_state == "green":
+            return {
+                "decision": "GO",
+                "risk": "LOW",
+                "target_speed": self.default_go_speed,
+                "reason": "green_light_detected",
+            }
+
+        return vehicle_rule
+
+    def callback(self, msg):
+        try:
+            data = json.loads(msg.data)
+        except Exception as exc:
+            self.get_logger().warn(f"JSON parse hatası: {exc}")
+            return
+
+        frame_width = int(data.get("image_width", data.get("frame_width", 800)))
+        frame_height = int(data.get("image_height", data.get("frame_height", 800)))
+        detections = data.get("detections", [])
+
+        front_vehicle = self.select_front_vehicle(detections, frame_width, frame_height)
+        front_vehicle, used_memory = self.apply_front_vehicle_memory(front_vehicle)
+
+        vehicle_rule = self.evaluate_vehicle_rule(front_vehicle, used_memory)
+
+        traffic_light_state, traffic_light_det = self.get_best_traffic_light_state(detections)
+        active_sign = self.get_best_sign(detections)
+        person_risk, active_person = self.get_person_risk(detections, frame_height)
+
+        final_rule = self.build_rule_decision(
+            vehicle_rule=vehicle_rule,
+            traffic_light_state=traffic_light_state,
+            traffic_light_det=traffic_light_det,
+            active_sign=active_sign,
+            person_risk=person_risk,
+            active_person=active_person,
+        )
+
+        distance_est = vehicle_rule.get("distance_est", None)
 
         output = {
-            "decision": decision,
-            "risk": risk,
-            "distance_est": round(distance_est, 2) if distance_est is not None else None,
+            "decision": final_rule["decision"],
+            "risk": final_rule["risk"],
+            "target_speed": round(float(final_rule["target_speed"]), 2),
+            "distance_est": round(float(distance_est), 2) if distance_est is not None else None,
             "front_vehicle": front_vehicle,
-            "reason": reason
+            "traffic_light_state": traffic_light_state,
+            "traffic_light": traffic_light_det,
+            "active_sign": active_sign,
+            "person_risk": person_risk,
+            "active_person": active_person,
+            "speed_limit_active": self.last_speed_limit_sign,
+            "reason": final_rule["reason"],
         }
 
         out_msg = String()
         out_msg.data = json.dumps(output)
         self.pub.publish(out_msg)
 
-        self.get_logger().info(json.dumps(output), throttle_duration_sec=0.5)
+        active_sign = output.get("active_sign")
+        traffic_light = output.get("traffic_light")
+        active_person = output.get("active_person")
+
+        sign_name = active_sign.get("sign_name") if active_sign else None
+        sign_type = active_sign.get("sign_type") if active_sign else None
+        sign_conf = active_sign.get("sign_confidence") if active_sign else None
+
+        light_conf = traffic_light.get("confidence") if traffic_light else None
+
+        person_conf = active_person.get("confidence") if active_person else None
+
+        decision_log = (
+            "\n"
+            "================ ADAS DECISION LOG ================\n"
+            f"DECISION        : {output.get('decision')}\n"
+            f"RISK            : {output.get('risk')}\n"
+            f"TARGET SPEED    : {output.get('target_speed')}\n"
+            f"REASON          : {output.get('reason')}\n"
+            "---------------------------------------------------\n"
+            f"FRONT DISTANCE  : {output.get('distance_est')}\n"
+            f"TRAFFIC LIGHT   : {output.get('traffic_light_state')} | conf={light_conf}\n"
+            f"TRAFFIC SIGN    : {sign_name} | type={sign_type} | conf={sign_conf}\n"
+            f"PERSON RISK     : {output.get('person_risk')} | conf={person_conf}\n"
+            f"SPEED LIMIT     : {output.get('speed_limit_active')}\n"
+            "===================================================\n"
+        )
+
+        self.get_logger().info(decision_log, throttle_duration_sec=0.5)
 
 
 def main(args=None):
