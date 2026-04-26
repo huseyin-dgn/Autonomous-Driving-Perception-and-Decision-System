@@ -258,14 +258,9 @@ outputs/models/
 
 ---
 
-## 🔮 Gelecek Çalışmalar
 
-- Gazebo entegrasyonu
-- CARLA simülasyonu
-- RL tabanlı karar sistemi
-- Multi-camera destek
 
----
+
 
 ## 📌 Özet
 
