@@ -1,4 +1,6 @@
 import json
+import time
+
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String
@@ -33,12 +35,13 @@ class DecisionNode(Node):
         self.declare_parameter("slow_speed", 0.8)
         self.declare_parameter("stop_speed", 0.0)
 
-        self.declare_parameter("person_conf_threshold", 0.25)
+        self.declare_parameter("person_conf_threshold", 0.08)
         self.declare_parameter("traffic_light_conf_threshold", 0.40)
         self.declare_parameter("traffic_sign_conf_threshold", 0.20)
         self.declare_parameter("sign_classifier_conf_threshold", 0.25)
 
-        self.declare_parameter("near_person_bottom_ratio", 0.35)
+        self.declare_parameter("near_person_bottom_ratio", 0.30)
+        self.declare_parameter("person_stop_hold_seconds", 3.0)
 
         self.detections_topic = self.get_parameter("detections_topic").value
         self.decision_topic = self.get_parameter("decision_topic").value
@@ -47,30 +50,57 @@ class DecisionNode(Node):
         self.stop_distance = float(self.get_parameter("stop_distance").value)
         self.slow_distance = float(self.get_parameter("slow_distance").value)
 
-        self.lane_center_tolerance_ratio = float(self.get_parameter("lane_center_tolerance_ratio").value)
-        self.vehicle_conf_threshold = float(self.get_parameter("vehicle_conf_threshold").value)
+        self.lane_center_tolerance_ratio = float(
+            self.get_parameter("lane_center_tolerance_ratio").value
+        )
+        self.vehicle_conf_threshold = float(
+            self.get_parameter("vehicle_conf_threshold").value
+        )
 
-        self.min_bbox_height_ratio = float(self.get_parameter("min_bbox_height_ratio").value)
-        self.min_bbox_width_ratio = float(self.get_parameter("min_bbox_width_ratio").value)
-        self.min_bbox_area_ratio = float(self.get_parameter("min_bbox_area_ratio").value)
+        self.min_bbox_height_ratio = float(
+            self.get_parameter("min_bbox_height_ratio").value
+        )
+        self.min_bbox_width_ratio = float(
+            self.get_parameter("min_bbox_width_ratio").value
+        )
+        self.min_bbox_area_ratio = float(
+            self.get_parameter("min_bbox_area_ratio").value
+        )
         self.min_aspect_ratio = float(self.get_parameter("min_aspect_ratio").value)
         self.max_aspect_ratio = float(self.get_parameter("max_aspect_ratio").value)
         self.min_bottom_y_ratio = float(self.get_parameter("min_bottom_y_ratio").value)
 
-        self.ignore_left_edge_ratio = float(self.get_parameter("ignore_left_edge_ratio").value)
-        self.ignore_right_edge_ratio = float(self.get_parameter("ignore_right_edge_ratio").value)
+        self.ignore_left_edge_ratio = float(
+            self.get_parameter("ignore_left_edge_ratio").value
+        )
+        self.ignore_right_edge_ratio = float(
+            self.get_parameter("ignore_right_edge_ratio").value
+        )
         self.max_missing_front = int(self.get_parameter("max_missing_front").value)
 
         self.default_go_speed = float(self.get_parameter("default_go_speed").value)
         self.slow_speed = float(self.get_parameter("slow_speed").value)
         self.stop_speed = float(self.get_parameter("stop_speed").value)
 
-        self.person_conf_threshold = float(self.get_parameter("person_conf_threshold").value)
-        self.traffic_light_conf_threshold = float(self.get_parameter("traffic_light_conf_threshold").value)
-        self.traffic_sign_conf_threshold = float(self.get_parameter("traffic_sign_conf_threshold").value)
-        self.sign_classifier_conf_threshold = float(self.get_parameter("sign_classifier_conf_threshold").value)
+        self.person_conf_threshold = float(
+            self.get_parameter("person_conf_threshold").value
+        )
+        self.traffic_light_conf_threshold = float(
+            self.get_parameter("traffic_light_conf_threshold").value
+        )
+        self.traffic_sign_conf_threshold = float(
+            self.get_parameter("traffic_sign_conf_threshold").value
+        )
+        self.sign_classifier_conf_threshold = float(
+            self.get_parameter("sign_classifier_conf_threshold").value
+        )
 
-        self.near_person_bottom_ratio = float(self.get_parameter("near_person_bottom_ratio").value)
+        self.near_person_bottom_ratio = float(
+            self.get_parameter("near_person_bottom_ratio").value
+        )
+        self.person_stop_hold_seconds = float(
+            self.get_parameter("person_stop_hold_seconds").value
+        )
 
         self.vehicle_labels = {"car", "truck", "bus"}
 
@@ -109,8 +139,21 @@ class DecisionNode(Node):
         self.last_speed_limit_sign = None
         self.current_speed_limit = None
 
-        self.sub = self.create_subscription(String, self.detections_topic, self.callback, 10)
-        self.pub = self.create_publisher(String, self.decision_topic, 10)
+        self.last_near_person_time = 0.0
+        self.last_near_person = None
+
+        self.sub = self.create_subscription(
+            String,
+            self.detections_topic,
+            self.callback,
+            10,
+        )
+
+        self.pub = self.create_publisher(
+            String,
+            self.decision_topic,
+            10,
+        )
 
         self.get_logger().info(
             f"decision_node başladı: {self.detections_topic} -> {self.decision_topic}"
@@ -119,6 +162,7 @@ class DecisionNode(Node):
     def estimate_distance(self, bbox_height):
         if bbox_height <= 1:
             return None
+
         return self.distance_k / bbox_height
 
     def is_valid_vehicle(self, det, frame_width, frame_height):
@@ -231,10 +275,12 @@ class DecisionNode(Node):
                 continue
 
             conf = float(det.get("confidence", 0.0))
+
             if conf < self.traffic_light_conf_threshold:
                 continue
 
             state = det.get("traffic_light_state", "unknown")
+
             if state not in ["red", "yellow", "green"]:
                 continue
 
@@ -289,10 +335,12 @@ class DecisionNode(Node):
                 continue
 
             conf = float(det.get("confidence", 0.0))
+
             if conf < self.person_conf_threshold:
                 continue
 
             bbox = det.get("bbox")
+
             if bbox is None or len(bbox) != 4:
                 continue
 
@@ -313,6 +361,34 @@ class DecisionNode(Node):
             return "near", nearest
 
         return "far", nearest
+
+    def apply_person_stop_hold(self, person_risk, active_person):
+        now = time.time()
+        person_hold_active = False
+
+        if person_risk == "near" and active_person is not None:
+            self.last_near_person_time = now
+            self.last_near_person = active_person
+            return person_risk, active_person, person_hold_active
+
+        recently_seen = (
+            self.last_near_person is not None
+            and (now - self.last_near_person_time) <= self.person_stop_hold_seconds
+        )
+
+        if recently_seen:
+            person_hold_active = True
+
+            held_person = dict(self.last_near_person)
+            held_person["held"] = True
+            held_person["hold_seconds_left"] = round(
+                self.person_stop_hold_seconds - (now - self.last_near_person_time),
+                2,
+            )
+
+            return "near", held_person, person_hold_active
+
+        return person_risk, active_person, person_hold_active
 
     def apply_front_vehicle_memory(self, front_vehicle):
         used_memory = False
@@ -352,7 +428,9 @@ class DecisionNode(Node):
                 "risk": "HIGH",
                 "target_speed": self.stop_speed,
                 "distance_est": distance_est,
-                "reason": "front_vehicle_too_close_memory" if used_memory else "front_vehicle_too_close",
+                "reason": "front_vehicle_too_close_memory"
+                if used_memory
+                else "front_vehicle_too_close",
             }
 
         if distance_est <= self.slow_distance:
@@ -361,7 +439,9 @@ class DecisionNode(Node):
                 "risk": "MEDIUM",
                 "target_speed": self.slow_speed,
                 "distance_est": distance_est,
-                "reason": "front_vehicle_near_memory" if used_memory else "front_vehicle_near",
+                "reason": "front_vehicle_near_memory"
+                if used_memory
+                else "front_vehicle_near",
             }
 
         return {
@@ -380,6 +460,7 @@ class DecisionNode(Node):
         active_sign,
         person_risk,
         active_person,
+        person_hold_active,
     ):
         active_sign_type = None
         active_sign_name = None
@@ -402,6 +483,16 @@ class DecisionNode(Node):
                 "reason": "red_light_detected",
             }
 
+        if person_risk == "near":
+            return {
+                "decision": "STOP",
+                "risk": "HIGH",
+                "target_speed": self.stop_speed,
+                "reason": "near_person_hold"
+                if person_hold_active
+                else "near_person_detected",
+            }
+
         if active_sign_type in self.stop_signs:
             return {
                 "decision": "STOP",
@@ -410,13 +501,8 @@ class DecisionNode(Node):
                 "reason": f"stop_sign_detected:{active_sign_type}",
             }
 
-        if person_risk == "near":
-            return {
-                "decision": "STOP",
-                "risk": "HIGH",
-                "target_speed": self.stop_speed,
-                "reason": "near_person_detected",
-            }
+        if vehicle_rule["decision"] == "STOP":
+            return vehicle_rule
 
         if traffic_light_state == "yellow":
             return {
@@ -442,7 +528,7 @@ class DecisionNode(Node):
                 "reason": "person_detected",
             }
 
-        if vehicle_rule["decision"] in ["STOP", "SLOW"]:
+        if vehicle_rule["decision"] == "SLOW":
             return vehicle_rule
 
         if self.current_speed_limit is not None:
@@ -482,14 +568,30 @@ class DecisionNode(Node):
         frame_height = int(data.get("image_height", data.get("frame_height", 800)))
         detections = data.get("detections", [])
 
-        front_vehicle = self.select_front_vehicle(detections, frame_width, frame_height)
-        front_vehicle, used_memory = self.apply_front_vehicle_memory(front_vehicle)
+        front_vehicle = self.select_front_vehicle(
+            detections,
+            frame_width,
+            frame_height,
+        )
 
+        front_vehicle, used_memory = self.apply_front_vehicle_memory(front_vehicle)
         vehicle_rule = self.evaluate_vehicle_rule(front_vehicle, used_memory)
 
-        traffic_light_state, traffic_light_det = self.get_best_traffic_light_state(detections)
+        traffic_light_state, traffic_light_det = self.get_best_traffic_light_state(
+            detections
+        )
+
         active_sign = self.get_best_sign(detections)
-        person_risk, active_person = self.get_person_risk(detections, frame_height)
+
+        raw_person_risk, raw_active_person = self.get_person_risk(
+            detections,
+            frame_height,
+        )
+
+        person_risk, active_person, person_hold_active = self.apply_person_stop_hold(
+            raw_person_risk,
+            raw_active_person,
+        )
 
         final_rule = self.build_rule_decision(
             vehicle_rule=vehicle_rule,
@@ -498,6 +600,7 @@ class DecisionNode(Node):
             active_sign=active_sign,
             person_risk=person_risk,
             active_person=active_person,
+            person_hold_active=person_hold_active,
         )
 
         distance_est = vehicle_rule.get("distance_est", None)
@@ -506,12 +609,16 @@ class DecisionNode(Node):
             "decision": final_rule["decision"],
             "risk": final_rule["risk"],
             "target_speed": round(float(final_rule["target_speed"]), 2),
-            "distance_est": round(float(distance_est), 2) if distance_est is not None else None,
+            "distance_est": round(float(distance_est), 2)
+            if distance_est is not None
+            else None,
             "front_vehicle": front_vehicle,
             "traffic_light_state": traffic_light_state,
             "traffic_light": traffic_light_det,
             "active_sign": active_sign,
             "person_risk": person_risk,
+            "raw_person_risk": raw_person_risk,
+            "person_hold_active": person_hold_active,
             "active_person": active_person,
             "speed_limit_active": self.last_speed_limit_sign,
             "reason": final_rule["reason"],
@@ -530,8 +637,8 @@ class DecisionNode(Node):
         sign_conf = active_sign.get("sign_confidence") if active_sign else None
 
         light_conf = traffic_light.get("confidence") if traffic_light else None
-
         person_conf = active_person.get("confidence") if active_person else None
+        person_held = active_person.get("held") if active_person else None
 
         decision_log = (
             "\n"
@@ -544,7 +651,7 @@ class DecisionNode(Node):
             f"FRONT DISTANCE  : {output.get('distance_est')}\n"
             f"TRAFFIC LIGHT   : {output.get('traffic_light_state')} | conf={light_conf}\n"
             f"TRAFFIC SIGN    : {sign_name} | type={sign_type} | conf={sign_conf}\n"
-            f"PERSON RISK     : {output.get('person_risk')} | conf={person_conf}\n"
+            f"PERSON RISK     : {output.get('person_risk')} | conf={person_conf} | hold={person_held}\n"
             f"SPEED LIMIT     : {output.get('speed_limit_active')}\n"
             "===================================================\n"
         )
@@ -562,6 +669,7 @@ def main(args=None):
         pass
     finally:
         node.destroy_node()
+
         try:
             if rclpy.ok():
                 rclpy.shutdown()

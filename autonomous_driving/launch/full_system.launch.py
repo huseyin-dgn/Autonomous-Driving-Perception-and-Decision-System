@@ -14,7 +14,13 @@ def generate_launch_description():
 
     package_root = repo_root / "autonomous_driving"
 
-    world_path = package_root / "gazebo" / "worlds" / "adas_test_world.sdf"
+    default_world_path = (
+        package_root
+        / "gazebo"
+        / "worlds"
+        / "scenario_01_red_light_only.sdf"
+    )
+
     models_path = package_root / "gazebo" / "models"
 
     default_model_path = (
@@ -33,6 +39,12 @@ def generate_launch_description():
         else str(models_path)
     )
 
+    world_path_arg = DeclareLaunchArgument(
+        "world_path",
+        default_value=str(default_world_path),
+        description="Gazebo SDF world path",
+    )
+
     model_path_arg = DeclareLaunchArgument(
         "model_path",
         default_value=str(default_model_path),
@@ -41,6 +53,7 @@ def generate_launch_description():
 
     return LaunchDescription(
         [
+            world_path_arg,
             model_path_arg,
 
             SetEnvironmentVariable(
@@ -49,7 +62,12 @@ def generate_launch_description():
             ),
 
             ExecuteProcess(
-                cmd=["gz", "sim", "-r", str(world_path)],
+                cmd=[
+                    "gz",
+                    "sim",
+                    "-r",
+                    LaunchConfiguration("world_path"),
+                ],
                 output="screen",
             ),
 
@@ -59,7 +77,7 @@ def generate_launch_description():
                     "run",
                     "ros_gz_bridge",
                     "parameter_bridge",
-                    "/front_camera@sensor_msgs/msg/Image@gz.msgs.Image",
+                    "/front_camera@sensor_msgs/msg/Image[gz.msgs.Image"
                 ],
                 output="screen",
             ),
@@ -95,7 +113,7 @@ def generate_launch_description():
                         "imgsz": 640,
 
                         "vehicle_min_conf": 0.20,
-                        "person_min_conf": 0.40,
+                        "person_min_conf": 0.25,
                         "traffic_min_conf": 0.40,
 
                         "vehicle_min_area_ratio": 0.015,
@@ -105,7 +123,7 @@ def generate_launch_description():
                         "vehicle_min_aspect": 0.8,
                         "vehicle_max_aspect": 4.5,
 
-                        "person_hold_frames": 6,
+                        "person_hold_frames": 90,
 
                         "show_debug": True,
                     }

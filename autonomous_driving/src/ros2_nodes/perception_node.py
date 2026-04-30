@@ -45,7 +45,7 @@ class PerceptionNode(Node):
         self.declare_parameter("imgsz", 640)
 
         self.declare_parameter("vehicle_min_conf", 0.20)
-        self.declare_parameter("person_min_conf", 0.35)
+        self.declare_parameter("person_min_conf", 0.25)
         self.declare_parameter("traffic_min_conf", 0.40)
 
         self.declare_parameter("vehicle_min_area_ratio", 0.015)
@@ -55,8 +55,10 @@ class PerceptionNode(Node):
         self.declare_parameter("vehicle_min_aspect", 0.8)
         self.declare_parameter("vehicle_max_aspect", 4.5)
 
-        self.declare_parameter("person_hold_frames", 12)
+        self.declare_parameter("person_hold_frames", 90)
         self.declare_parameter("show_debug", True)
+
+        self.declare_parameter("sim_red_light_fallback", True)
 
         self.image_topic = self.get_parameter("image_topic").value
         self.detections_topic = self.get_parameter("detections_topic").value
@@ -88,6 +90,7 @@ class PerceptionNode(Node):
 
         self.person_hold_frames = int(self.get_parameter("person_hold_frames").value)
         self.show_debug = bool(self.get_parameter("show_debug").value)
+        self.sim_red_light_fallback = bool(self.get_parameter("sim_red_light_fallback").value)
 
         self.latest_decision = {
             "decision": "-",
@@ -162,6 +165,7 @@ class PerceptionNode(Node):
         self.get_logger().info(f"decision_topic={self.decision_topic}")
         self.get_logger().info(f"model_path={self.model_path}")
         self.get_logger().info(f"sign_classifier_enabled={self.sign_classifier_enabled}")
+        self.get_logger().info(f"sim_traffic_light_fallback={self.sim_red_light_fallback}")
 
     def decision_callback(self, msg):
         try:
@@ -272,8 +276,8 @@ class PerceptionNode(Node):
         red_mask2 = cv2.inRange(hsv, (170, 80, 80), (180, 255, 255))
         red_mask = red_mask1 + red_mask2
 
-        yellow_mask = cv2.inRange(hsv, (18, 80, 80), (35, 255, 255))
-        green_mask = cv2.inRange(hsv, (40, 60, 60), (90, 255, 255))
+        yellow_mask = cv2.inRange(hsv, (18, 80, 80), (38, 255, 255))
+        green_mask = cv2.inRange(hsv, (40, 60, 60), (95, 255, 255))
 
         red_score = cv2.countNonZero(red_mask)
         yellow_score = cv2.countNonZero(yellow_mask)
@@ -291,6 +295,118 @@ class PerceptionNode(Node):
             return "unknown"
 
         return state
+
+    def detect_sim_traffic_light(self, frame):
+        if frame is None:
+            return None
+
+        frame_h, frame_w = frame.shape[:2]
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+        masks = {}
+
+        red_mask_1 = cv2.inRange(
+            hsv,
+            np.array([0, 90, 120], dtype=np.uint8),
+            np.array([10, 255, 255], dtype=np.uint8),
+        )
+        red_mask_2 = cv2.inRange(
+            hsv,
+            np.array([170, 90, 120], dtype=np.uint8),
+            np.array([180, 255, 255], dtype=np.uint8),
+        )
+        masks["red"] = cv2.bitwise_or(red_mask_1, red_mask_2)
+
+        masks["yellow"] = cv2.inRange(
+            hsv,
+            np.array([18, 90, 120], dtype=np.uint8),
+            np.array([38, 255, 255], dtype=np.uint8),
+        )
+
+        masks["green"] = cv2.inRange(
+            hsv,
+            np.array([40, 70, 90], dtype=np.uint8),
+            np.array([95, 255, 255], dtype=np.uint8),
+        )
+
+        kernel = np.ones((5, 5), np.uint8)
+
+        best_det = None
+        best_score = 0.0
+
+        for state, mask in masks.items():
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
+
+            contours, _ = cv2.findContours(
+                mask,
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE,
+            )
+
+            for contour in contours:
+                area = cv2.contourArea(contour)
+
+                if area < 120:
+                    continue
+
+                x, y, bw, bh = cv2.boundingRect(contour)
+
+                if bw <= 0 or bh <= 0:
+                    continue
+
+                aspect = bw / float(bh)
+
+                if aspect < 0.55 or aspect > 1.65:
+                    continue
+
+                cx = x + bw / 2.0
+                cy = y + bh / 2.0
+
+                if cx < frame_w * 0.15 or cx > frame_w * 0.85:
+                    continue
+
+                if cy > frame_h * 0.75:
+                    continue
+
+                roi_hsv = hsv[y:y + bh, x:x + bw]
+                mean_value = float(np.mean(roi_hsv[:, :, 2])) if roi_hsv.size > 0 else 0.0
+                score = area * (mean_value / 255.0)
+
+                pad_x = int(bw * 0.55)
+                top_pad = int(bh * 0.45)
+                bottom_extend = int(bh * 3.40)
+
+                x1 = max(0, x - pad_x)
+                y1 = max(0, y - top_pad)
+                x2 = min(frame_w - 1, x + bw + pad_x)
+                y2 = min(frame_h - 1, y + bh + bottom_extend)
+
+                det_w = max(1.0, float(x2 - x1))
+                det_h = max(1.0, float(y2 - y1))
+                area_ratio = (det_w * det_h) / float(frame_w * frame_h)
+
+                confidence = min(0.99, 0.70 + score / 6000.0)
+
+                det = {
+                    "class_id": -1,
+                    "label": "traffic_light",
+                    "original_label": f"sim_{state}_traffic_light",
+                    "confidence": float(confidence),
+                    "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                    "traffic_light_state": state,
+                    "source": "sim_color_fallback",
+                    "center_x": float((x1 + x2) / 2.0),
+                    "bbox_width": float(det_w),
+                    "bbox_height": float(det_h),
+                    "area_ratio": float(area_ratio),
+                }
+
+                if score > best_score:
+                    best_score = score
+                    best_det = det
+
+        return best_det
 
     def classify_traffic_sign(self, frame, bbox):
         if not self.sign_classifier_enabled or self.sign_model is None:
@@ -331,6 +447,9 @@ class PerceptionNode(Node):
 
             sign_type = self.sign_class_names[int(pred_idx.item())]
             sign_conf = float(conf.item())
+
+            if sign_conf < self.sign_classifier_min_conf:
+                return "unknown", sign_conf
 
             return sign_type, sign_conf
 
@@ -435,6 +554,7 @@ class PerceptionNode(Node):
 
         for det in vehicles:
             duplicate = False
+
             for old in kept:
                 if self.iou(det["bbox"], old["bbox"]) > 0.55:
                     duplicate = True
@@ -499,7 +619,13 @@ class PerceptionNode(Node):
 
         if label == "traffic_light":
             state = det.get("traffic_light_state", "unknown")
-            text = f"{label} {state} {conf:.2f}"
+            source = det.get("source", "")
+
+            if source == "sim_color_fallback":
+                text = f"TRAFFIC LIGHT: {state.upper()} {conf:.2f}"
+            else:
+                text = f"{label} {state} {conf:.2f}"
+
         elif label == "traffic_sign":
             sign_type = det.get("sign_type", "unknown")
             sign_conf = det.get("sign_confidence", 0.0)
@@ -508,7 +634,8 @@ class PerceptionNode(Node):
             if sign_type != "unknown":
                 text = f"LEVHA: {pretty_name} {sign_conf:.2f}"
             else:
-                text = f"LEVHA: Bilinmiyor {conf:.2f}"
+                text = f"LEVHA: Bilinmiyor {sign_conf:.2f}"
+
         else:
             text = f"{label} {conf:.2f}"
 
@@ -705,16 +832,62 @@ class PerceptionNode(Node):
         clean_detections = self.remove_duplicate_detections(clean_detections)
         clean_detections = self.apply_person_temporal_hold(clean_detections)
 
+        if self.sim_red_light_fallback:
+            sim_light = self.detect_sim_traffic_light(frame)
+
+            if sim_light is not None:
+                filtered_detections = []
+
+                for det in clean_detections:
+                    if det["label"] == "traffic_sign":
+                        overlap = self.iou(det["bbox"], sim_light["bbox"])
+                        sign_conf = float(det.get("sign_confidence", 0.0))
+
+                        if overlap > 0.15 or sign_conf < 0.35:
+                            continue
+
+                    filtered_detections.append(det)
+
+                clean_detections = filtered_detections
+
+                already_has_same_light = any(
+                    d["label"] == "traffic_light"
+                    and d.get("traffic_light_state") == sim_light.get("traffic_light_state")
+                    for d in clean_detections
+                )
+
+                if not already_has_same_light:
+                    clean_detections.append(sim_light)
+
         for det in clean_detections:
             self.draw_detection(annotated, det)
 
         debug_canvas = self.make_debug_canvas(annotated, clean_detections)
+
+        active_light_state = "unknown"
+        active_light_confidence = None
+
+        traffic_lights = [
+            d for d in clean_detections
+            if d["label"] == "traffic_light"
+        ]
+
+        if len(traffic_lights) > 0:
+            best_light = sorted(
+                traffic_lights,
+                key=lambda d: d.get("confidence", 0.0),
+                reverse=True,
+            )[0]
+            active_light_state = best_light.get("traffic_light_state", "unknown")
+            active_light_confidence = best_light.get("confidence", None)
 
         payload = {
             "stamp": time.time(),
             "image_width": frame_w,
             "image_height": frame_h,
             "detections": clean_detections,
+            "traffic_light_state": active_light_state,
+            "traffic_light_confidence": active_light_confidence,
         }
 
         msg_out = String()
@@ -744,8 +917,11 @@ def main(args=None):
     finally:
         if node.show_debug:
             cv2.destroyAllWindows()
+
         node.destroy_node()
-        rclpy.shutdown()
+
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
