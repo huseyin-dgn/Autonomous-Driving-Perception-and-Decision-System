@@ -1,0 +1,397 @@
+.
+├── argparse
+├── configs
+│   └── data_bdd.yaml
+├── debug_logs
+│   ├── perception_conf_summary.txt
+│   ├── perception_conf_values.csv
+│   ├── perception_detections.log
+│   └── perception_full.log
+├── gazebo
+│   ├── config
+│   │   └── bridge.yaml
+│   ├── models
+│   │   ├── speed30_new
+│   │   │   ├── materials
+│   │   │   │   ├── scripts
+│   │   │   │   │   ├── sign.material
+│   │   │   │   │   └── speed_limit_30.material
+│   │   │   │   └── textures
+│   │   │   │       ├── speed30.png
+│   │   │   │       └── speed_limit_30.png
+│   │   │   ├── model.config
+│   │   │   └── model.sdf
+│   │   ├── stop_sign_model
+│   │   │   ├── model.config
+│   │   │   └── model.sdf
+│   │   ├── traffic_light_green_model
+│   │   │   ├── model.config
+│   │   │   └── model.sdf
+│   │   ├── traffic_light_model
+│   │   │   ├── model.config
+│   │   │   └── model.sdf
+│   │   ├── traffic_light_red_model
+│   │   │   ├── model.config
+│   │   │   └── model.sdf
+│   │   ├── traffic_light_yellow_model
+│   │   │   ├── model.config
+│   │   │   └── model.sdf
+│   │   └── vehicle_model
+│   │       ├── model.config
+│   │       └── model.sdf
+│   └── worlds
+│       ├── adas_test_world_final.sdf
+│       ├── adas_test_world.sdf
+│       ├── adas_test_world.sdf.save
+│       ├── adas_world.sdf
+│       ├── Ekran Görüntüsü - 2026-04-24 21-52-57.png
+│       ├── Ekran Görüntüsü - 2026-04-24 21-53-28.png
+│       ├── Ekran Görüntüsü - 2026-04-26 02-26-18.png
+│       ├── Ekran Görüntüsü - 2026-04-26 02-26-36.png
+│       ├── scenario_01_red_light_only.sdf
+│       ├── scenario_03_green_light_only.sdf
+│       ├── scenario_04_green_light_vehicle_ahead.sdf
+│       ├── scenario_04_yellow_light_only.sdf
+│       ├── scenario_05_green_light_vehicle_near.sdf
+│       ├── scenario_06_green_light_vehicle_safe.sdf
+│       ├── scenario_07_green_vehicle_near_pedestrian.sdf
+│       ├── scenario_08_red_light_vehicle_near.sdf
+│       └── scenario_09_yellow_light_close_vehicle.sdf
+├── json
+├── launch
+│   ├── carla_full_system.launch.py
+│   ├── full_system.launch.py
+│   ├── gazebo_sim.launch.py
+│   └── perception.launch.py
+├── main.py
+├── outputs
+│   ├── logs
+│   │   └── bdd_classes_all.txt
+│   ├── models
+│   │   ├── adas5_targeted_aug_finetune_from_old_img1024_b8_ep50
+│   │   │   ├── args.yaml
+│   │   │   ├── BoxF1_curve.png
+│   │   │   ├── BoxP_curve.png
+│   │   │   ├── BoxPR_curve.png
+│   │   │   ├── BoxR_curve.png
+│   │   │   ├── confusion_matrix_normalized.png
+│   │   │   ├── confusion_matrix.png
+│   │   │   ├── labels.jpg
+│   │   │   ├── results.csv
+│   │   │   ├── results.png
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   ├── train_batch53320.jpg
+│   │   │   ├── train_batch53321.jpg
+│   │   │   ├── train_batch53322.jpg
+│   │   │   ├── val_batch0_labels.jpg
+│   │   │   ├── val_batch0_pred.jpg
+│   │   │   ├── val_batch1_labels.jpg
+│   │   │   ├── val_batch1_pred.jpg
+│   │   │   ├── val_batch2_labels.jpg
+│   │   │   ├── val_batch2_pred.jpg
+│   │   │   └── weights
+│   │   ├── adas5_targeted_aug_finetune_from_old_img960_ep40
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── results.csv
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   ├── adas_carla_f6_yolo
+│   │   │   └── weights
+│   │   ├── adas_carla_person_sign_motor_boost_img1024_ep20
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   ├── adas_carla_person_sign_motor_boost_img1024_ep20_from960best
+│   │   │   ├── args.yaml
+│   │   │   ├── BoxF1_curve.png
+│   │   │   ├── BoxP_curve.png
+│   │   │   ├── BoxPR_curve.png
+│   │   │   ├── BoxR_curve.png
+│   │   │   ├── confusion_matrix_normalized.png
+│   │   │   ├── confusion_matrix.png
+│   │   │   ├── labels.jpg
+│   │   │   ├── results.csv
+│   │   │   ├── results.png
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   ├── train_batch89760.jpg
+│   │   │   ├── train_batch89761.jpg
+│   │   │   ├── train_batch89762.jpg
+│   │   │   ├── val_batch0_labels.jpg
+│   │   │   ├── val_batch0_pred.jpg
+│   │   │   ├── val_batch1_labels.jpg
+│   │   │   ├── val_batch1_pred.jpg
+│   │   │   ├── val_batch2_labels.jpg
+│   │   │   ├── val_batch2_pred.jpg
+│   │   │   └── weights
+│   │   ├── adas_carla_person_sign_motor_boost_test15_img832
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── results.csv
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   ├── adas_carla_person_sign_motor_boost_v1
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   ├── adas_carla_person_sign_motor_boost_v12
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   ├── bdd_yolo_v14
+│   │   │   ├── args.yaml
+│   │   │   ├── BoxP_curve.png
+│   │   │   ├── BoxR_curve.png
+│   │   │   ├── results.csv
+│   │   │   ├── results.png
+│   │   │   └── weights
+│   │   ├── carla_f6_from_project_best_1024_35ep_b4_w0
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   ├── carla_f6_from_project_best_832_15ep_b16_w0
+│   │   │   ├── args.yaml
+│   │   │   ├── BoxF1_curve.png
+│   │   │   ├── BoxP_curve.png
+│   │   │   ├── BoxPR_curve.png
+│   │   │   ├── BoxR_curve.png
+│   │   │   ├── confusion_matrix_normalized.png
+│   │   │   ├── confusion_matrix.png
+│   │   │   ├── labels.jpg
+│   │   │   ├── results.csv
+│   │   │   ├── results.png
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2485.jpg
+│   │   │   ├── train_batch2486.jpg
+│   │   │   ├── train_batch2487.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   ├── val_batch0_labels.jpg
+│   │   │   ├── val_batch0_pred.jpg
+│   │   │   ├── val_batch1_labels.jpg
+│   │   │   ├── val_batch1_pred.jpg
+│   │   │   ├── val_batch2_labels.jpg
+│   │   │   ├── val_batch2_pred.jpg
+│   │   │   └── weights
+│   │   ├── carla_f6_from_project_best_832_15ep_b4_w0
+│   │   │   ├── args.yaml
+│   │   │   ├── labels.jpg
+│   │   │   ├── results.csv
+│   │   │   ├── train_batch0.jpg
+│   │   │   ├── train_batch1.jpg
+│   │   │   ├── train_batch2.jpg
+│   │   │   └── weights
+│   │   └── traffic_light_state_resnet18_carla
+│   │       ├── classes.json
+│   │       └── history.json
+│   └── predictions
+│       ├── critical_front_car_decision_1.jpg
+│       ├── critical_front_car_decision_2.jpg
+│       ├── critical_front_car_decision_3.jpg
+│       ├── critical_front_car_decision.jpg
+│       ├── critical_front_car_segmentation_debug.jpg
+│       ├── notebook_result_1.jpg
+│       └── notebook_result.jpg
+├── package.xml
+├── perception_node.py
+├── pkill
+├── project_tree_detailed.txt
+├── random
+├── README.md
+├── requirements.txt
+├── resource
+│   └── autonomous_driving
+├── scripts
+│   ├── adas_carla_prepare.sh
+│   ├── balance_adas5_train.py
+│   ├── carla_5sec_static_detection_scenario.py
+│   ├── carla_add_extra_person.py
+│   ├── carla_add_pedestrians_to_current_scene.py
+│   ├── carla_add_visible_pedestrians.py
+│   ├── carla_big_detection_showcase.py
+│   ├── carla_camera_view_full_test.py
+│   ├── carla_capture_highres_frame.py
+│   ├── carla_city_flow_adas_scene.py
+│   ├── carla_city_flow_moving_scene.py
+│   ├── carla_city_flow_moving_scene.py.bak_camera_1777846459
+│   ├── carla_city_flow_moving_scene.py.bak_clean_demo
+│   ├── carla_city_flow_moving_scene.py.bak_less_cars_peds
+│   ├── carla_city_flow_moving_scene.py.bak_weather_1777846452
+│   ├── carla_city_greenlight_lane_scene.py
+│   ├── carla_city_redlight_showcase.py
+│   ├── carla_clean_adas_scene.py
+│   ├── carla_clean_straight_adas_scene.py
+│   ├── carla_clean_visible_test_scene.py
+│   ├── carla_clear_straight_showcase.py
+│   ├── carla_close_person_motor_front_light_scene.py
+│   ├── carla_collect_groundtruth_yolo.py
+│   ├── carla_collect_yolo_dataset.py
+│   ├── carla_collect_yolo_dataset.py.save
+│   ├── carla_dense_static_detection_scene.py
+│   ├── carla_direct_visible_test_scene.py
+│   ├── carla_draw_three_traffic_lights.py
+│   ├── carla_final_city_all_objects_scene.py
+│   ├── carla_fixed_adas_scene.py
+│   ├── carla_fixed_full_adas_scene.py
+│   ├── carla_force_targets_camera_view.py
+│   ├── carla_force_targets_in_front.py
+│   ├── carla_force_visible_pedestrians.py
+│   ├── carla_full_adas_objects_light_scene.py
+│   ├── carla_human_stress_test_scene.py
+│   ├── carla_human_visible_fov_scene.py
+│   ├── carla_lite_adas_light_scene.py
+│   ├── carla_lite_adas_light_scene_v2.py
+│   ├── carla_manual_perfect_scene.py
+│   ├── carla_minimal_light_person_motor_test.py
+│   ├── carla_minimal_real_test_scene.py
+│   ├── carla_moving_adas_scene.py
+│   ├── carla_moving_detection_scenario.py
+│   ├── carla_moving_wide_adas_scene.py
+│   ├── carla_pedestrian_detection_test_scene.py
+│   ├── carla_pedestrian_model_test_scene.py
+│   ├── carla_perception_drive_scene.py
+│   ├── carla_person_motor_light_only_scene.py
+│   ├── carla_real_traffic_light_scenario.py
+│   ├── carla_rgb_front_ros_clean.py
+│   ├── carla_rgb_front_ros_only.py
+│   ├── carla_rgb_front_ros_only.py.bak_1777891384
+│   ├── carla_rgb_front_ros_only.py.bak_camera_1777846459
+│   ├── carla_rgb_front_ros_traffic_lights_overlay.py
+│   ├── carla_rgb_front_screen_and_ros.py
+│   ├── carla_rgb_to_ros2_image.py
+│   ├── carla_showcase_all_objects_scene.py
+│   ├── carla_side_traffic_detection_scenario.py
+│   ├── carla_simple_car_stop_peds.py
+│   ├── carla_spawn_adas_scenario.py
+│   ├── carla_spawn_full_adas_scenario.py
+│   ├── carla_spawn_one_pedestrian_type.py
+│   ├── carla_spawn_rgb_front_camera.py
+│   ├── carla_spawn_sign_prop.py
+│   ├── carla_spawn_visible_pedestrians.py
+│   ├── carla_stable_full_adas_scene.py
+│   ├── carla_static_roadside_detection_scenario.py
+│   ├── carla_straight_adas_2each_scene.py
+│   ├── carla_straight_front_scene.py
+│   ├── carla_visible_detection_scenario.py
+│   ├── check_train_duplicates.py
+│   ├── collect_carla_traffic_light_unknown_crops.py
+│   ├── infer_image.py
+│   ├── infer_video.py
+│   ├── list_bdd_classes.py
+│   ├── make_adas5_final_augmented.py
+│   ├── make_adas5_targeted_aug.py
+│   ├── offline_yolo_annotate.py
+│   ├── prepare_bdd.py
+│   ├── prepare_traffic_light_state_dataset.py
+│   ├── remap_yolo_to_adas5.py
+│   ├── run_carla_adas_all.sh
+│   ├── run_decision_carla.sh
+│   ├── run_perception_carla_best.sh
+│   ├── run_perception_carla.sh
+│   ├── run_perception_carla.sh.bak
+│   ├── run_perception_carla.sh.bak_before_optimum
+│   ├── run_perception_carla.sh.bak_broken_1777890972
+│   ├── run_perception_carla.sh.bak_far_detection
+│   ├── run_perception_carla.sh.bak_force60_1777847213
+│   ├── run_perception_carla.sh.bak_new_model_1777890416
+│   ├── run_perception_carla.sh.bak_opt_fix
+│   ├── run_perception_carla.sh.bak_stable_1777891670
+│   ├── run_perception_carla.sh.bak_stable_1777891676
+│   ├── run_perception_carla.sh.bak_visible_far
+│   ├── train_traffic_light_state_classifier.py
+│   └── train_yolo.py
+├── setup.cfg
+├── setup_project.py
+├── setup.py
+├── sign_classifier
+│   ├── outputs
+│   │   ├── accuracy_curve.png
+│   │   ├── classification_report.csv
+│   │   ├── classification_report.json
+│   │   ├── class_names.json
+│   │   ├── confusion_matrix.png
+│   │   ├── loss_curve.png
+│   │   ├── training_history.csv
+│   │   └── training_history.json
+│   ├── prepare_dataset.py
+│   ├── scripts
+│   └── train_resnet18.py
+└── src
+    ├── inference
+    │   ├── decision_engine.py
+    │   ├── __init__.py
+    │   ├── predictor.py
+    │   └── video_processor.py
+    ├── __init__.py
+    ├── lane
+    │   ├── lane_detector.py
+    │   └── steering.py
+    ├── models
+    │   ├── detector.py
+    │   └── __init__.py
+    ├── ros2_nodes
+    │   ├── camera_node.py
+    │   ├── carla_camera_adapter_node.py
+    │   ├── carla_control_adapter_node.py
+    │   ├── carla_logger_node.py
+    │   ├── carla_scenario_manager_node.py
+    │   ├── carla_sensor_bridge_node.py
+    │   ├── carla_world_manager_node.py
+    │   ├── control_node.py
+    │   ├── decision_node.py
+    │   ├── decision_node.py.bak_label_map
+    │   ├── __init__.py
+    │   ├── lidar_node.py
+    │   ├── perception_node.py
+    │   ├── perception_node.py.bak
+    │   ├── perception_node.py.bak_1777846341
+    │   ├── perception_node.py.bak_force60_1777847213
+    │   ├── perception_node.py.bak_hsv_strict
+    │   ├── perception_node.py.bak_imgsz_crop
+    │   ├── perception_node.py.bak_label_map
+    │   ├── perception_node.py.bak_light_latch_2s
+    │   ├── perception_node.py.bak_multi_light
+    │   ├── perception_node.py.bak_near_vehicle_1777898032
+    │   ├── perception_node.py.bak_opt_fix
+    │   ├── perception_node.py.bak_person60_1777847000
+    │   ├── perception_node.py.bak_person_crop
+    │   ├── perception_node.py.bak_person_filter
+    │   ├── perception_node.py.bak_raw_debug
+    │   ├── perception_node.py.bak_region_hsv
+    │   ├── perception_node.py.bak_tl_state_classifier_1778067483
+    │   ├── perception_node.py.bak_tracking
+    │   ├── perception_node.py.bak_traffic_light60_1777847115
+    │   ├── perception_node.py.bak_unknown_light_fix
+    │   ├── perception_node.py.bak_vehicle_fp_filter_1777847334
+    │   └── perception_node.py.bak_vehicle_sign_false_positive
+    └── utils
+        ├── bbox_utils.py
+        ├── color_utils.py
+        ├── distance_utils.py
+        ├── __init__.py
+        ├── io.py
+        ├── logger.py
+        ├── paths.py
+        └── visualizer.py
+
+57 directories, 337 files

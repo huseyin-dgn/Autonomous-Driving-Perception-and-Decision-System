@@ -102,7 +102,7 @@ class DecisionNode(Node):
             self.get_parameter("person_stop_hold_seconds").value
         )
 
-        self.vehicle_labels = {"car", "truck", "bus"}
+        self.vehicle_labels = {"vehicle", "car", "truck", "bus", "van", "suv", "motorcycle"}
 
         self.stop_signs = {
             "dur",

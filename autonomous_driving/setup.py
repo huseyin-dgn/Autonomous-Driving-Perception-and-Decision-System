@@ -10,27 +10,41 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/autonomous_driving"]),
         ("share/autonomous_driving", ["package.xml"]),
-        ("share/autonomous_driving/launch", [
-            "launch/gazebo_sim.launch.py",
-            "launch/perception.launch.py",
-            "launch/full_system.launch.py",
-        ]),
-        ("share/autonomous_driving/gazebo/worlds", [
-            "gazebo/worlds/adas_test_world.sdf",
-        ]),
-        ("share/autonomous_driving/gazebo/models/vehicle_model", [
-            "gazebo/models/vehicle_model/model.sdf",
-            "gazebo/models/vehicle_model/model.config",
-        ]),
-        ("share/autonomous_driving/gazebo/config", [
-            "gazebo/config/bridge.yaml",
-        ]),
+        (
+            "share/autonomous_driving/launch",
+            [
+                "launch/gazebo_sim.launch.py",
+                "launch/perception.launch.py",
+                "launch/full_system.launch.py",
+                "launch/carla_full_system.launch.py",
+            ],
+        ),
+        (
+            "share/autonomous_driving/gazebo/worlds",
+            [
+                "gazebo/worlds/adas_test_world.sdf",
+                "gazebo/worlds/adas_test_world_final.sdf",
+            ],
+        ),
+        (
+            "share/autonomous_driving/gazebo/models/vehicle_model",
+            [
+                "gazebo/models/vehicle_model/model.sdf",
+                "gazebo/models/vehicle_model/model.config",
+            ],
+        ),
+        (
+            "share/autonomous_driving/gazebo/config",
+            [
+                "gazebo/config/bridge.yaml",
+            ],
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
     maintainer="you",
     maintainer_email="you@example.com",
-    description="Autonomous driving Gazebo + ROS2 integration package",
+    description="Autonomous driving Gazebo + CARLA + ROS2 integration package",
     license="MIT",
     tests_require=["pytest"],
     entry_points={
@@ -40,6 +54,12 @@ setup(
             "perception_node = ros2_nodes.perception_node:main",
             "decision_node = ros2_nodes.decision_node:main",
             "control_node = ros2_nodes.control_node:main",
+
+            "carla_world_manager_node = ros2_nodes.carla_world_manager_node:main",
+            "carla_sensor_bridge_node = ros2_nodes.carla_sensor_bridge_node:main",
+            "carla_control_adapter_node = ros2_nodes.carla_control_adapter_node:main",
+            "carla_scenario_manager_node = ros2_nodes.carla_scenario_manager_node:main",
+            "carla_logger_node = ros2_nodes.carla_logger_node:main",
         ],
     },
 )

@@ -18,7 +18,7 @@ def generate_launch_description():
         package_root
         / "gazebo"
         / "worlds"
-        / "scenario_01_red_light_only.sdf"
+        / "adas_test_world.sdf"
     )
 
     models_path = package_root / "gazebo" / "models"
@@ -77,7 +77,18 @@ def generate_launch_description():
                     "run",
                     "ros_gz_bridge",
                     "parameter_bridge",
-                    "/front_camera@sensor_msgs/msg/Image[gz.msgs.Image"
+                    "/front_camera@sensor_msgs/msg/Image[gz.msgs.Image",
+                ],
+                output="screen",
+            ),
+
+            ExecuteProcess(
+                cmd=[
+                    "ros2",
+                    "run",
+                    "ros_gz_bridge",
+                    "parameter_bridge",
+                    "/cmd_vel@geometry_msgs/msg/Twist]gz.msgs.Twist",
                 ],
                 output="screen",
             ),
@@ -124,8 +135,8 @@ def generate_launch_description():
                         "vehicle_max_aspect": 4.5,
 
                         "person_hold_frames": 90,
-
                         "show_debug": True,
+                        "sim_red_light_fallback": True,
                     }
                 ],
             ),
@@ -147,10 +158,20 @@ def generate_launch_description():
 
                         "vehicle_conf_threshold": 0.20,
                         "min_bbox_height_ratio": 0.08,
+                        "min_bbox_width_ratio": 0.08,
                         "min_bbox_area_ratio": 0.015,
                         "min_aspect_ratio": 0.8,
                         "max_aspect_ratio": 4.5,
                         "min_bottom_y_ratio": 0.30,
+
+                        "person_conf_threshold": 0.08,
+                        "traffic_light_conf_threshold": 0.40,
+                        "traffic_sign_conf_threshold": 0.20,
+                        "sign_classifier_conf_threshold": 0.25,
+
+                        "default_go_speed": 1.5,
+                        "slow_speed": 0.8,
+                        "stop_speed": 0.0,
                     }
                 ],
             ),
@@ -164,6 +185,10 @@ def generate_launch_description():
                     {
                         "decision_topic": "/adas/decision",
                         "cmd_topic": "/cmd_vel",
+                        "default_stop_speed": 0.0,
+                        "default_slow_speed": 0.8,
+                        "default_go_speed": 1.5,
+                        "max_speed": 3.0,
                     }
                 ],
             ),

@@ -1,15 +1,21 @@
 import json
 import time
-
 import cv2
+import os
 import numpy as np
-import rclpy
+
+if os.environ.get("ADAS_HEADLESS", "0") == "1":
+    cv2.imshow = lambda *args, **kwargs: None
+    cv2.waitKey = lambda *args, **kwargs: -1
+    cv2.namedWindow = lambda *args, **kwargs: None
+    cv2.destroyAllWindows = lambda *args, **kwargs: None
+
 import torch
 import torch.nn as nn
-import torchvision.models as models
-import torchvision.transforms as transforms
-
+from torchvision import models, transforms
 from PIL import Image as PILImage
+
+import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -17,128 +23,130 @@ from cv_bridge import CvBridge
 from ultralytics import YOLO
 
 
+def env_float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except Exception:
+        return float(default)
+
+
+def env_int(name, default):
+    try:
+        return int(os.environ.get(name, default))
+    except Exception:
+        return int(default)
+
+
+def env_bool(name, default):
+    value = os.environ.get(name, str(default)).lower().strip()
+    return value in ["1", "true", "yes", "on"]
+
+
 class PerceptionNode(Node):
     def __init__(self):
         super().__init__("perception_node")
 
-        self.declare_parameter("image_topic", "/adas/camera/front/image_raw")
+        self.declare_parameter("image_topic", os.environ.get("IMAGE_TOPIC", "/adas/camera/front/image_raw"))
         self.declare_parameter("detections_topic", "/adas/perception/detections_json")
         self.declare_parameter("annotated_topic", "/adas/perception/annotated_image")
-        self.declare_parameter("decision_topic", "/adas/decision")
-        self.declare_parameter("model_path", "yolov8n.pt")
 
         self.declare_parameter(
-            "sign_classifier_path",
-            "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/sign_classifier/outputs/sign_classifier_resnet18_best.pt",
+            "model_path",
+            os.environ.get(
+                "MODEL_PATH",
+                "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/outputs/models/adas5_targeted_aug_finetune_from_old_img1024_b8_ep50/weights/best.pt",
+            ),
+        )
+
+        self.declare_parameter("conf_threshold", env_float("CONF_THRESHOLD", 0.25))
+        self.declare_parameter("raw_conf_threshold", env_float("RAW_CONF_THRESHOLD", 0.05))
+        self.declare_parameter("person_conf_threshold", env_float("PERSON_CONF_THRESHOLD", 0.40))
+        self.declare_parameter("vehicle_conf_threshold", env_float("VEHICLE_CONF_THRESHOLD", 0.25))
+        self.declare_parameter("motorcycle_conf_threshold", env_float("MOTORCYCLE_CONF_THRESHOLD", 0.05))
+        self.declare_parameter("traffic_light_conf_threshold", env_float("TRAFFIC_LIGHT_CONF_THRESHOLD", 0.50))
+        self.declare_parameter("traffic_sign_conf_threshold", env_float("TRAFFIC_SIGN_CONF_THRESHOLD", 0.20))
+
+        self.declare_parameter("iou_threshold", env_float("YOLO_IOU", 0.50))
+        self.declare_parameter("imgsz", env_int("YOLO_IMGSZ", 960))
+        self.declare_parameter("max_det", env_int("YOLO_MAX_DET", 80))
+        self.declare_parameter("show_debug", env_bool("SHOW_DEBUG", True))
+
+        self.declare_parameter(
+            "traffic_light_state_classifier_enabled",
+            env_bool("TRAFFIC_LIGHT_STATE_CLASSIFIER_ENABLED", True),
         )
         self.declare_parameter(
-            "sign_class_names_path",
-            "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/sign_classifier/outputs/class_names.json",
+            "traffic_light_state_model_path",
+            os.environ.get(
+                "TRAFFIC_LIGHT_STATE_MODEL_PATH",
+                "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/outputs/models/traffic_light_state_resnet18_carla/best.pt",
+            ),
         )
-        self.declare_parameter("sign_classifier_enabled", True)
-        self.declare_parameter("sign_classifier_min_conf", 0.25)
-        self.declare_parameter("sign_crop_padding_ratio", 0.20)
-
-        self.declare_parameter("conf_threshold", 0.20)
-        self.declare_parameter("iou_threshold", 0.45)
-        self.declare_parameter("max_det", 20)
-        self.declare_parameter("imgsz", 640)
-
-        self.declare_parameter("vehicle_min_conf", 0.20)
-        self.declare_parameter("person_min_conf", 0.25)
-        self.declare_parameter("traffic_min_conf", 0.40)
-
-        self.declare_parameter("vehicle_min_area_ratio", 0.015)
-        self.declare_parameter("vehicle_min_width_ratio", 0.08)
-        self.declare_parameter("vehicle_min_height_ratio", 0.08)
-        self.declare_parameter("vehicle_min_bottom_ratio", 0.30)
-        self.declare_parameter("vehicle_min_aspect", 0.8)
-        self.declare_parameter("vehicle_max_aspect", 4.5)
-
-        self.declare_parameter("person_hold_frames", 90)
-        self.declare_parameter("show_debug", True)
-
-        self.declare_parameter("sim_red_light_fallback", True)
+        self.declare_parameter(
+            "traffic_light_state_conf_threshold",
+            env_float("TRAFFIC_LIGHT_STATE_CONF_THRESHOLD", 0.60),
+        )
+        self.declare_parameter(
+            "traffic_light_state_device",
+            os.environ.get("TRAFFIC_LIGHT_STATE_DEVICE", "auto"),
+        )
+        self.declare_parameter(
+            "traffic_light_state_use_hsv_fallback",
+            env_bool("TRAFFIC_LIGHT_STATE_USE_HSV_FALLBACK", True),
+        )
 
         self.image_topic = self.get_parameter("image_topic").value
         self.detections_topic = self.get_parameter("detections_topic").value
         self.annotated_topic = self.get_parameter("annotated_topic").value
-        self.decision_topic = self.get_parameter("decision_topic").value
         self.model_path = self.get_parameter("model_path").value
 
-        self.sign_classifier_path = self.get_parameter("sign_classifier_path").value
-        self.sign_class_names_path = self.get_parameter("sign_class_names_path").value
-        self.sign_classifier_enabled = bool(self.get_parameter("sign_classifier_enabled").value)
-        self.sign_classifier_min_conf = float(self.get_parameter("sign_classifier_min_conf").value)
-        self.sign_crop_padding_ratio = float(self.get_parameter("sign_crop_padding_ratio").value)
-
         self.conf_threshold = float(self.get_parameter("conf_threshold").value)
+        self.raw_conf_threshold = float(self.get_parameter("raw_conf_threshold").value)
+        self.person_conf_threshold = float(self.get_parameter("person_conf_threshold").value)
+        self.vehicle_conf_threshold = float(self.get_parameter("vehicle_conf_threshold").value)
+        self.motorcycle_conf_threshold = float(self.get_parameter("motorcycle_conf_threshold").value)
+        self.traffic_light_conf_threshold = float(self.get_parameter("traffic_light_conf_threshold").value)
+        self.traffic_sign_conf_threshold = float(self.get_parameter("traffic_sign_conf_threshold").value)
+
         self.iou_threshold = float(self.get_parameter("iou_threshold").value)
-        self.max_det = int(self.get_parameter("max_det").value)
         self.imgsz = int(self.get_parameter("imgsz").value)
-
-        self.vehicle_min_conf = float(self.get_parameter("vehicle_min_conf").value)
-        self.person_min_conf = float(self.get_parameter("person_min_conf").value)
-        self.traffic_min_conf = float(self.get_parameter("traffic_min_conf").value)
-
-        self.vehicle_min_area_ratio = float(self.get_parameter("vehicle_min_area_ratio").value)
-        self.vehicle_min_width_ratio = float(self.get_parameter("vehicle_min_width_ratio").value)
-        self.vehicle_min_height_ratio = float(self.get_parameter("vehicle_min_height_ratio").value)
-        self.vehicle_min_bottom_ratio = float(self.get_parameter("vehicle_min_bottom_ratio").value)
-        self.vehicle_min_aspect = float(self.get_parameter("vehicle_min_aspect").value)
-        self.vehicle_max_aspect = float(self.get_parameter("vehicle_max_aspect").value)
-
-        self.person_hold_frames = int(self.get_parameter("person_hold_frames").value)
+        self.max_det = int(self.get_parameter("max_det").value)
         self.show_debug = bool(self.get_parameter("show_debug").value)
-        self.sim_red_light_fallback = bool(self.get_parameter("sim_red_light_fallback").value)
 
-        self.latest_decision = {
-            "decision": "-",
-            "risk": "-",
-            "target_speed": "-",
-            "reason": "-",
-            "traffic_light_state": "-",
-            "speed_limit_active": "-",
-            "distance_est": None,
-            "active_sign": None,
-            "person_risk": "-",
-        }
+        self.tl_state_classifier_enabled = bool(
+            self.get_parameter("traffic_light_state_classifier_enabled").value
+        )
+        self.tl_state_model_path = str(
+            self.get_parameter("traffic_light_state_model_path").value
+        )
+        self.tl_state_conf_threshold = float(
+            self.get_parameter("traffic_light_state_conf_threshold").value
+        )
+        self.tl_state_device_name = str(
+            self.get_parameter("traffic_light_state_device").value
+        )
+        self.tl_state_use_hsv_fallback = bool(
+            self.get_parameter("traffic_light_state_use_hsv_fallback").value
+        )
 
         self.bridge = CvBridge()
         self.model = YOLO(self.model_path)
 
-        self.torch_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.sign_model = None
-        self.sign_class_names = []
+        self.tl_state_model = None
+        self.tl_state_transform = None
+        self.tl_state_class_names = []
+        self.tl_state_img_size = 128
+        self.tl_state_device = "cpu"
+        self.tl_state_ready = False
 
-        self.sign_transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(
-                mean=[0.485, 0.456, 0.406],
-                std=[0.229, 0.224, 0.225],
-            ),
-        ])
+        self.load_traffic_light_state_classifier()
 
-        if self.sign_classifier_enabled:
-            self.load_sign_classifier()
-
-        self.last_person_detections = []
-        self.person_missing_count = 0
-
-        self.window_name = "ADAS PERCEPTION + DECISION DEBUG"
+        self.window_name = "ADAS PERCEPTION DEBUG"
 
         self.sub = self.create_subscription(
             Image,
             self.image_topic,
             self.image_callback,
-            10,
-        )
-
-        self.decision_sub = self.create_subscription(
-            String,
-            self.decision_topic,
-            self.decision_callback,
             10,
         )
 
@@ -158,130 +166,332 @@ class PerceptionNode(Node):
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(self.window_name, 1400, 800)
 
-        self.get_logger().info("perception_node başladı")
+        self.get_logger().info("perception_node başladı - MODEL ONLY + TL STATE CLASSIFIER + HSV FALLBACK")
+        self.get_logger().info(f"YOLO class names={self.model.names}")
         self.get_logger().info(f"image_topic={self.image_topic}")
         self.get_logger().info(f"detections_topic={self.detections_topic}")
         self.get_logger().info(f"annotated_topic={self.annotated_topic}")
-        self.get_logger().info(f"decision_topic={self.decision_topic}")
         self.get_logger().info(f"model_path={self.model_path}")
-        self.get_logger().info(f"sign_classifier_enabled={self.sign_classifier_enabled}")
-        self.get_logger().info(f"sim_traffic_light_fallback={self.sim_red_light_fallback}")
+        self.get_logger().info(f"raw_conf_threshold={self.raw_conf_threshold}")
+        self.get_logger().info(f"person_conf_threshold={self.person_conf_threshold}")
+        self.get_logger().info(f"vehicle_conf_threshold={self.vehicle_conf_threshold}")
+        self.get_logger().info(f"motorcycle_conf_threshold={self.motorcycle_conf_threshold}")
+        self.get_logger().info(f"traffic_light_conf_threshold={self.traffic_light_conf_threshold}")
+        self.get_logger().info(f"traffic_sign_conf_threshold={self.traffic_sign_conf_threshold}")
+        self.get_logger().info(f"iou_threshold={self.iou_threshold}")
+        self.get_logger().info(f"imgsz={self.imgsz}")
+        self.get_logger().info(f"max_det={self.max_det}")
+        self.get_logger().info(f"tl_state_classifier_enabled={self.tl_state_classifier_enabled}")
+        self.get_logger().info(f"tl_state_ready={self.tl_state_ready}")
+        self.get_logger().info(f"tl_state_model_path={self.tl_state_model_path}")
+        self.get_logger().info(f"tl_state_conf_threshold={self.tl_state_conf_threshold}")
+        self.get_logger().info(f"tl_state_device={self.tl_state_device}")
 
-    def decision_callback(self, msg):
+    def build_tl_state_model(self, num_classes):
+        model = models.resnet18(weights=None)
+        in_features = model.fc.in_features
+        model.fc = nn.Sequential(
+            nn.Dropout(0.25),
+            nn.Linear(in_features, num_classes),
+        )
+        return model
+
+    def load_traffic_light_state_classifier(self):
+        if not self.tl_state_classifier_enabled:
+            self.get_logger().info("traffic light state classifier disabled")
+            return
+
+        if not os.path.exists(self.tl_state_model_path):
+            self.get_logger().warning(
+                f"traffic light state model bulunamadı, HSV fallback kullanılacak: {self.tl_state_model_path}"
+            )
+            return
+
         try:
-            self.latest_decision = json.loads(msg.data)
-        except Exception as exc:
-            self.get_logger().warn(f"decision JSON parse hata: {exc}")
-
-    def load_sign_classifier(self):
-        try:
-            checkpoint = torch.load(self.sign_classifier_path, map_location=self.torch_device)
-
-            if "class_names" in checkpoint:
-                self.sign_class_names = checkpoint["class_names"]
+            if self.tl_state_device_name == "auto":
+                self.tl_state_device = "cuda" if torch.cuda.is_available() else "cpu"
             else:
-                with open(self.sign_class_names_path, "r", encoding="utf-8") as f:
-                    self.sign_class_names = json.load(f)
+                self.tl_state_device = self.tl_state_device_name
 
-            num_classes = len(self.sign_class_names)
+            ckpt = torch.load(self.tl_state_model_path, map_location=self.tl_state_device)
 
-            self.sign_model = models.resnet18(weights=None)
-            self.sign_model.fc = nn.Sequential(
-                nn.Dropout(0.30),
-                nn.Linear(self.sign_model.fc.in_features, num_classes),
+            class_names = ckpt.get("class_names", None)
+            if not class_names:
+                raise RuntimeError("checkpoint içinde class_names yok")
+
+            self.tl_state_class_names = list(class_names)
+            self.tl_state_img_size = int(ckpt.get("img_size", 128))
+
+            model = self.build_tl_state_model(len(self.tl_state_class_names))
+            model.load_state_dict(ckpt["model_state"])
+            model.to(self.tl_state_device)
+            model.eval()
+
+            self.tl_state_model = model
+            self.tl_state_transform = transforms.Compose([
+                transforms.Resize((self.tl_state_img_size, self.tl_state_img_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                ),
+            ])
+
+            self.tl_state_ready = True
+
+            self.get_logger().info(
+                f"traffic light state classifier loaded: classes={self.tl_state_class_names}"
             )
 
-            self.sign_model.load_state_dict(checkpoint["model_state_dict"])
-            self.sign_model.to(self.torch_device)
-            self.sign_model.eval()
-
-            self.get_logger().info("traffic sign classifier yüklendi")
-            self.get_logger().info(f"sign classes={self.sign_class_names}")
-
         except Exception as exc:
-            self.sign_classifier_enabled = False
-            self.sign_model = None
-            self.get_logger().error(f"traffic sign classifier yüklenemedi: {exc}")
+            self.tl_state_ready = False
+            self.tl_state_model = None
+            self.tl_state_transform = None
+            self.get_logger().error(
+                f"traffic light state classifier yüklenemedi, HSV fallback kullanılacak: {exc}"
+            )
 
-    def normalize_label(self, label):
-        label = str(label).lower().strip()
+    def get_yolo_name(self, cls_id):
+        names = self.model.names
 
-        if label in ["car", "truck", "bus", "vehicle", "van", "suv"]:
-            return "car"
+        if isinstance(names, dict):
+            return names.get(cls_id, str(cls_id))
 
-        if label in ["person", "pedestrian"]:
-            return "person"
+        if isinstance(names, list) and 0 <= cls_id < len(names):
+            return names[cls_id]
 
-        if label in ["traffic light", "traffic_light", "light"]:
-            return "traffic_light"
+        return str(cls_id)
 
-        if label in ["traffic sign", "traffic_sign", "sign", "stop sign"]:
-            return "traffic_sign"
+    def normalize_text(self, text):
+        text = str(text).lower().strip()
+        text = text.replace("-", "_")
+        text = text.replace(" ", "_")
+        return text
 
-        return label
+    def normalize_label(self, original_label):
+        label = self.normalize_text(original_label)
+
+        class_map = {
+            "motorcycle": "motorcycle",
+            "motorbike": "motorcycle",
+            "bike": "motorcycle",
+
+            "pedestrian": "person",
+            "person": "person",
+            "human": "person",
+            "insan": "person",
+            "yaya": "person",
+
+            "traffic_light": "traffic_light",
+            "trafficlight": "traffic_light",
+            "red_light": "traffic_light",
+            "yellow_light": "traffic_light",
+            "green_light": "traffic_light",
+            "traffic_light_red": "traffic_light",
+            "traffic_light_yellow": "traffic_light",
+            "traffic_light_green": "traffic_light",
+
+            "traffic_sign": "traffic_sign",
+            "trafficsign": "traffic_sign",
+            "sign": "traffic_sign",
+
+            "vehicle": "vehicle",
+            "car": "vehicle",
+            "truck": "vehicle",
+            "bus": "vehicle",
+        }
+
+        return class_map.get(label, label)
+
+    def get_class_threshold(self, label):
+        if label == "person":
+            return self.person_conf_threshold
+
+        if label == "vehicle":
+            return self.vehicle_conf_threshold
+
+        if label == "motorcycle":
+            return self.motorcycle_conf_threshold
+
+        if label == "traffic_light":
+            return self.traffic_light_conf_threshold
+
+        if label == "traffic_sign":
+            return self.traffic_sign_conf_threshold
+
+        return self.conf_threshold
+
+    def get_sign_type_from_label(self, original_label):
+        label = self.normalize_text(original_label)
+
+        sign_classes = {
+            "dikkat",
+            "dur",
+            "duraklamak_park_yasaktir",
+            "girisi_olmayan_yol",
+            "hiz_siniri_20",
+            "hiz_siniri_30",
+            "hiz_siniri_40",
+            "hiz_siniri_50",
+            "isikli_isaret_cihazi",
+            "okul_gecidi",
+            "park_etmek_yasaktir",
+            "saga_donulmez",
+            "sola_donulmez",
+            "tasit_giremez",
+            "yaya_gecidi",
+            "yol_calismasi",
+            "yol_ver",
+        }
+
+        if label in sign_classes:
+            return label
+
+        if label == "stop_sign":
+            return "dur"
+
+        return "unknown"
 
     def pretty_sign_name(self, sign_type):
         names = {
             "dikkat": "Dikkat",
             "dur": "Dur",
             "duraklamak_park_yasaktir": "Duraklamak/Park Yasak",
-            "girisi_olmayan_yol": "Girisi Olmayan Yol",
-            "hiz_siniri_20": "Hiz Siniri 20",
-            "hiz_siniri_30": "Hiz Siniri 30",
-            "hiz_siniri_40": "Hiz Siniri 40",
-            "hiz_siniri_50": "Hiz Siniri 50",
-            "isikli_isaret_cihazi": "Isikli Isaret Cihazi",
-            "okul_gecidi": "Okul Gecidi",
+            "girisi_olmayan_yol": "Girişi Olmayan Yol",
+            "hiz_siniri_20": "Hız Sınırı 20",
+            "hiz_siniri_30": "Hız Sınırı 30",
+            "hiz_siniri_40": "Hız Sınırı 40",
+            "hiz_siniri_50": "Hız Sınırı 50",
+            "isikli_isaret_cihazi": "Işıklı İşaret Cihazı",
+            "okul_gecidi": "Okul Geçidi",
             "park_etmek_yasaktir": "Park Yasak",
-            "saga_donulmez": "Saga Donulmez",
-            "sola_donulmez": "Sola Donulmez",
-            "tasit_giremez": "Tasit Giremez",
-            "yaya_gecidi": "Yaya Gecidi",
-            "yol_calismasi": "Yol Calismasi",
+            "saga_donulmez": "Sağa Dönülmez",
+            "sola_donulmez": "Sola Dönülmez",
+            "tasit_giremez": "Taşıt Giremez",
+            "yaya_gecidi": "Yaya Geçidi",
+            "yol_calismasi": "Yol Çalışması",
             "yol_ver": "Yol Ver",
             "unknown": "Bilinmiyor",
         }
 
         return names.get(sign_type, sign_type)
 
-    def is_vehicle(self, label):
-        return label == "car"
+    def get_component_info(self, mask):
+        mask = mask.astype("uint8")
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
 
-    def is_person(self, label):
-        return label == "person"
+        if num_labels <= 1:
+            return {
+                "area": 0,
+                "x": 0,
+                "y": 0,
+                "w": 0,
+                "h": 0,
+                "touches_border": False,
+            }
 
-    def is_traffic(self, label):
-        return label in ["traffic_light", "traffic_sign"]
+        best = {
+            "area": 0,
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0,
+            "touches_border": False,
+        }
 
-    def estimate_traffic_light_state(self, frame, bbox):
-        h, w = frame.shape[:2]
+        H, W = mask.shape[:2]
+
+        for i in range(1, num_labels):
+            x, y, w, h, area = stats[i]
+
+            if int(area) > best["area"]:
+                touches_border = (
+                    x <= 1 or
+                    y <= 1 or
+                    x + w >= W - 2 or
+                    y + h >= H - 2
+                )
+
+                best = {
+                    "area": int(area),
+                    "x": int(x),
+                    "y": int(y),
+                    "w": int(w),
+                    "h": int(h),
+                    "touches_border": bool(touches_border),
+                }
+
+        return best
+
+    def classify_traffic_light_hsv_strict(self, frame, bbox):
+        frame_h, frame_w = frame.shape[:2]
+
         x1, y1, x2, y2 = [int(v) for v in bbox]
 
-        x1 = max(0, min(w - 1, x1))
-        x2 = max(0, min(w - 1, x2))
-        y1 = max(0, min(h - 1, y1))
-        y2 = max(0, min(h - 1, y2))
+        x1 = max(0, min(frame_w - 1, x1))
+        y1 = max(0, min(frame_h - 1, y1))
+        x2 = max(0, min(frame_w - 1, x2))
+        y2 = max(0, min(frame_h - 1, y2))
 
-        if x2 <= x1 or y2 <= y1:
-            return "unknown"
+        bw = max(1, x2 - x1)
+        bh = max(1, y2 - y1)
+        area = bw * bh
 
-        roi = frame[y1:y2, x1:x2]
+        scores = {
+            "red": 0,
+            "yellow": 0,
+            "green": 0,
+        }
 
-        if roi.size == 0:
-            return "unknown"
+        if bw < 10 or bh < 18 or area < 180:
+            return "unknown", scores, f"too_small:bw={bw},bh={bh},area={area}"
 
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        crop = frame[y1:y2, x1:x2]
 
-        red_mask1 = cv2.inRange(hsv, (0, 80, 80), (10, 255, 255))
-        red_mask2 = cv2.inRange(hsv, (170, 80, 80), (180, 255, 255))
-        red_mask = red_mask1 + red_mask2
+        if crop.size == 0:
+            return "unknown", scores, "empty_crop"
 
-        yellow_mask = cv2.inRange(hsv, (18, 80, 80), (38, 255, 255))
-        green_mask = cv2.inRange(hsv, (40, 60, 60), (95, 255, 255))
+        crop = cv2.resize(crop, (60, 120), interpolation=cv2.INTER_LINEAR)
 
-        red_score = cv2.countNonZero(red_mask)
-        yellow_score = cv2.countNonZero(yellow_mask)
-        green_score = cv2.countNonZero(green_mask)
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+
+        h = hsv[:, :, 0]
+        s = hsv[:, :, 1]
+        v = hsv[:, :, 2]
+
+        red_mask = (
+            (((h >= 0) & (h <= 12)) | ((h >= 168) & (h <= 179))) &
+            (s >= 80) &
+            (v >= 100)
+        )
+
+        yellow_mask = (
+            (h >= 18) &
+            (h <= 38) &
+            (s >= 90) &
+            (v >= 130)
+        )
+
+        green_mask = (
+            (h >= 42) &
+            (h <= 95) &
+            (s >= 60) &
+            (v >= 80)
+        )
+
+        H = crop.shape[0]
+
+        top = slice(0, int(H * 0.40))
+        mid = slice(int(H * 0.30), int(H * 0.72))
+        bot = slice(int(H * 0.60), H)
+
+        red_region = red_mask[top, :]
+        yellow_region = yellow_mask[mid, :]
+        green_region = green_mask[bot, :]
+
+        red_score = int(red_region.sum())
+        yellow_score = int(yellow_region.sum())
+        green_score = int(green_region.sum())
 
         scores = {
             "red": red_score,
@@ -289,317 +499,256 @@ class PerceptionNode(Node):
             "green": green_score,
         }
 
-        state = max(scores, key=scores.get)
+        total = red_score + yellow_score + green_score
 
-        if scores[state] < 5:
-            return "unknown"
+        if total < 20:
+            return "unknown", scores, f"not_enough_signal:{total}"
 
-        return state
+        red_comp = self.get_component_info(red_region)
+        yellow_comp = self.get_component_info(yellow_region)
+        green_comp = self.get_component_info(green_region)
 
-    def detect_sim_traffic_light(self, frame):
-        if frame is None:
+        best_color = max(scores, key=scores.get)
+        best_score = scores[best_color]
+
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        second_score = sorted_scores[1][1]
+
+        if best_score < 18:
+            return "unknown", scores, f"best_too_low:{best_score}"
+
+        if second_score > 0 and best_score < second_score * 1.6:
+            return "unknown", scores, f"not_dominant:best={best_score},second={second_score}"
+
+        if red_score >= 18 and red_comp["area"] >= 10 and red_score >= yellow_score * 0.45:
+            return "red", scores, "red_region_priority"
+
+        if best_color == "yellow":
+            if yellow_score < 45:
+                return "unknown", scores, f"yellow_weak:{yellow_score}"
+
+            if yellow_comp["area"] < 15:
+                return "unknown", scores, f"yellow_component_too_small:{yellow_comp['area']}"
+
+            if yellow_comp["touches_border"]:
+                return "unknown", scores, "yellow_touches_border_probably_body_or_backside"
+
+            yellow_region_area = max(1, yellow_region.shape[0] * yellow_region.shape[1])
+            yellow_ratio = yellow_comp["area"] / yellow_region_area
+
+            if yellow_ratio > 0.35:
+                return "unknown", scores, f"yellow_area_too_large_probably_body:{yellow_ratio:.3f}"
+
+        if best_color == "green":
+            if green_score < 20:
+                return "unknown", scores, f"green_weak:{green_score}"
+
+            if green_comp["area"] < 10:
+                return "unknown", scores, f"green_component_too_small:{green_comp['area']}"
+
+        if best_color == "red":
+            if red_score < 18:
+                return "unknown", scores, f"red_weak:{red_score}"
+
+            if red_comp["area"] < 10:
+                return "unknown", scores, f"red_component_too_small:{red_comp['area']}"
+
+        return best_color, scores, "region_hsv_ok"
+
+    def classify_traffic_light_state_model(self, frame, bbox):
+        if not self.tl_state_ready or self.tl_state_model is None or self.tl_state_transform is None:
             return None
 
         frame_h, frame_w = frame.shape[:2]
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-
-        masks = {}
-
-        red_mask_1 = cv2.inRange(
-            hsv,
-            np.array([0, 90, 120], dtype=np.uint8),
-            np.array([10, 255, 255], dtype=np.uint8),
-        )
-        red_mask_2 = cv2.inRange(
-            hsv,
-            np.array([170, 90, 120], dtype=np.uint8),
-            np.array([180, 255, 255], dtype=np.uint8),
-        )
-        masks["red"] = cv2.bitwise_or(red_mask_1, red_mask_2)
-
-        masks["yellow"] = cv2.inRange(
-            hsv,
-            np.array([18, 90, 120], dtype=np.uint8),
-            np.array([38, 255, 255], dtype=np.uint8),
-        )
-
-        masks["green"] = cv2.inRange(
-            hsv,
-            np.array([40, 70, 90], dtype=np.uint8),
-            np.array([95, 255, 255], dtype=np.uint8),
-        )
-
-        kernel = np.ones((5, 5), np.uint8)
-
-        best_det = None
-        best_score = 0.0
-
-        for state, mask in masks.items():
-            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
-
-            contours, _ = cv2.findContours(
-                mask,
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE,
-            )
-
-            for contour in contours:
-                area = cv2.contourArea(contour)
-
-                if area < 120:
-                    continue
-
-                x, y, bw, bh = cv2.boundingRect(contour)
-
-                if bw <= 0 or bh <= 0:
-                    continue
-
-                aspect = bw / float(bh)
-
-                if aspect < 0.55 or aspect > 1.65:
-                    continue
-
-                cx = x + bw / 2.0
-                cy = y + bh / 2.0
-
-                if cx < frame_w * 0.15 or cx > frame_w * 0.85:
-                    continue
-
-                if cy > frame_h * 0.75:
-                    continue
-
-                roi_hsv = hsv[y:y + bh, x:x + bw]
-                mean_value = float(np.mean(roi_hsv[:, :, 2])) if roi_hsv.size > 0 else 0.0
-                score = area * (mean_value / 255.0)
-
-                pad_x = int(bw * 0.55)
-                top_pad = int(bh * 0.45)
-                bottom_extend = int(bh * 3.40)
-
-                x1 = max(0, x - pad_x)
-                y1 = max(0, y - top_pad)
-                x2 = min(frame_w - 1, x + bw + pad_x)
-                y2 = min(frame_h - 1, y + bh + bottom_extend)
-
-                det_w = max(1.0, float(x2 - x1))
-                det_h = max(1.0, float(y2 - y1))
-                area_ratio = (det_w * det_h) / float(frame_w * frame_h)
-
-                confidence = min(0.99, 0.70 + score / 6000.0)
-
-                det = {
-                    "class_id": -1,
-                    "label": "traffic_light",
-                    "original_label": f"sim_{state}_traffic_light",
-                    "confidence": float(confidence),
-                    "bbox": [float(x1), float(y1), float(x2), float(y2)],
-                    "traffic_light_state": state,
-                    "source": "sim_color_fallback",
-                    "center_x": float((x1 + x2) / 2.0),
-                    "bbox_width": float(det_w),
-                    "bbox_height": float(det_h),
-                    "area_ratio": float(area_ratio),
-                }
-
-                if score > best_score:
-                    best_score = score
-                    best_det = det
-
-        return best_det
-
-    def classify_traffic_sign(self, frame, bbox):
-        if not self.sign_classifier_enabled or self.sign_model is None:
-            return "unknown", 0.0
-
-        h, w = frame.shape[:2]
         x1, y1, x2, y2 = [int(v) for v in bbox]
+
+        x1 = max(0, min(frame_w - 1, x1))
+        y1 = max(0, min(frame_h - 1, y1))
+        x2 = max(0, min(frame_w - 1, x2))
+        y2 = max(0, min(frame_h - 1, y2))
 
         bw = max(1, x2 - x1)
         bh = max(1, y2 - y1)
 
-        pad_x = int(bw * self.sign_crop_padding_ratio)
-        pad_y = int(bh * self.sign_crop_padding_ratio)
+        if bw < 4 or bh < 4:
+            return {
+                "state": "unknown",
+                "confidence": 0.0,
+                "probs": {},
+                "reason": f"classifier_too_small:bw={bw},bh={bh}",
+            }
 
-        x1 = max(0, x1 - pad_x)
-        y1 = max(0, y1 - pad_y)
-        x2 = min(w - 1, x2 + pad_x)
-        y2 = min(h - 1, y2 + pad_y)
+        pad_x = int(bw * 0.08)
+        pad_y = int(bh * 0.08)
 
-        if x2 <= x1 or y2 <= y1:
-            return "unknown", 0.0
+        cx1 = max(0, x1 - pad_x)
+        cy1 = max(0, y1 - pad_y)
+        cx2 = min(frame_w - 1, x2 + pad_x)
+        cy2 = min(frame_h - 1, y2 + pad_y)
 
-        crop = frame[y1:y2, x1:x2]
+        crop = frame[cy1:cy2, cx1:cx2]
 
         if crop.size == 0:
-            return "unknown", 0.0
+            return {
+                "state": "unknown",
+                "confidence": 0.0,
+                "probs": {},
+                "reason": "classifier_empty_crop",
+            }
+
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        pil_img = PILImage.fromarray(rgb)
+
+        x = self.tl_state_transform(pil_img)
+        x = x.unsqueeze(0).to(self.tl_state_device)
+
+        with torch.no_grad():
+            logits = self.tl_state_model(x)
+            prob_tensor = torch.softmax(logits, dim=1)[0].detach().cpu()
+
+        probs = {}
+        for i, name in enumerate(self.tl_state_class_names):
+            probs[str(name)] = float(prob_tensor[i].item())
+
+        idx = int(torch.argmax(prob_tensor).item())
+        state = str(self.tl_state_class_names[idx])
+        confidence = float(prob_tensor[idx].item())
+
+        if state not in ["red", "yellow", "green", "unknown"]:
+            state = "unknown"
+
+        return {
+            "state": state,
+            "confidence": confidence,
+            "probs": probs,
+            "reason": f"classifier_pred:{state}:{confidence:.3f}",
+        }
+
+    def classify_traffic_light_state(self, frame, bbox):
+        hsv_state, hsv_scores, hsv_reason = self.classify_traffic_light_hsv_strict(frame, bbox)
+
+        result = {
+            "state": hsv_state,
+            "source": "hsv_strict",
+            "state_confidence": None,
+            "classifier_probs": {},
+            "classifier_reason": "classifier_not_used",
+            "hsv_state": hsv_state,
+            "hsv_scores": hsv_scores,
+            "hsv_reason": hsv_reason,
+            "final_reason": hsv_reason,
+        }
+
+        if not self.tl_state_classifier_enabled:
+            return result
+
+        if not self.tl_state_ready:
+            if self.tl_state_use_hsv_fallback:
+                result["source"] = "hsv_fallback_classifier_not_ready"
+                result["final_reason"] = f"classifier_not_ready;hsv={hsv_state}:{hsv_reason}"
+                return result
+
+            result["state"] = "unknown"
+            result["source"] = "classifier_not_ready_no_fallback"
+            result["final_reason"] = "classifier_not_ready_no_fallback"
+            return result
 
         try:
-            crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            pil_img = PILImage.fromarray(crop_rgb)
-
-            tensor = self.sign_transform(pil_img).unsqueeze(0).to(self.torch_device)
-
-            with torch.no_grad():
-                logits = self.sign_model(tensor)
-                probs = torch.softmax(logits, dim=1)
-                conf, pred_idx = torch.max(probs, dim=1)
-
-            sign_type = self.sign_class_names[int(pred_idx.item())]
-            sign_conf = float(conf.item())
-
-            if sign_conf < self.sign_classifier_min_conf:
-                return "unknown", sign_conf
-
-            return sign_type, sign_conf
-
+            cls_result = self.classify_traffic_light_state_model(frame, bbox)
         except Exception as exc:
-            self.get_logger().error(f"traffic sign classify hata: {exc}")
-            return "unknown", 0.0
+            if self.tl_state_use_hsv_fallback:
+                result["source"] = "hsv_fallback_classifier_error"
+                result["classifier_reason"] = f"classifier_error:{exc}"
+                result["final_reason"] = f"classifier_error:{exc};hsv={hsv_state}:{hsv_reason}"
+                return result
 
-    def pass_filter(self, det, frame_w, frame_h):
-        label = det["label"]
-        conf = det["confidence"]
+            result["state"] = "unknown"
+            result["source"] = "classifier_error_no_fallback"
+            result["classifier_reason"] = f"classifier_error:{exc}"
+            result["final_reason"] = f"classifier_error:{exc}"
+            return result
 
-        x1, y1, x2, y2 = det["bbox"]
-        bw = max(1.0, x2 - x1)
-        bh = max(1.0, y2 - y1)
+        if cls_result is None:
+            if self.tl_state_use_hsv_fallback:
+                result["source"] = "hsv_fallback_classifier_none"
+                result["final_reason"] = f"classifier_none;hsv={hsv_state}:{hsv_reason}"
+                return result
 
-        width_ratio = bw / frame_w
-        height_ratio = bh / frame_h
-        area_ratio = (bw * bh) / (frame_w * frame_h)
-        bottom_ratio = y2 / frame_h
-        aspect = bw / bh
+            result["state"] = "unknown"
+            result["source"] = "classifier_none_no_fallback"
+            result["final_reason"] = "classifier_none_no_fallback"
+            return result
 
-        det["center_x"] = (x1 + x2) / 2.0
-        det["bbox_width"] = bw
-        det["bbox_height"] = bh
-        det["area_ratio"] = area_ratio
+        cls_state = cls_result.get("state", "unknown")
+        cls_conf = float(cls_result.get("confidence", 0.0))
+        cls_probs = cls_result.get("probs", {})
+        cls_reason = cls_result.get("reason", "-")
 
-        if self.is_vehicle(label):
-            if conf < self.vehicle_min_conf:
-                return False
-            if area_ratio < self.vehicle_min_area_ratio:
-                return False
-            if width_ratio < self.vehicle_min_width_ratio:
-                return False
-            if height_ratio < self.vehicle_min_height_ratio:
-                return False
-            if bottom_ratio < self.vehicle_min_bottom_ratio:
-                return False
-            if aspect < self.vehicle_min_aspect:
-                return False
-            if aspect > self.vehicle_max_aspect:
-                return False
-            return True
+        result["state_confidence"] = cls_conf
+        result["classifier_probs"] = cls_probs
+        result["classifier_reason"] = cls_reason
 
-        if self.is_person(label):
-            if conf < 0.15:
-                return False
-            return True
+        if cls_conf < self.tl_state_conf_threshold:
+            result["state"] = "unknown"
+            result["source"] = "classifier_low_conf"
+            result["final_reason"] = (
+                f"classifier_low_conf:pred={cls_state},conf={cls_conf:.3f},"
+                f"thr={self.tl_state_conf_threshold:.3f};hsv={hsv_state}:{hsv_reason}"
+            )
+            return result
 
-        if self.is_traffic(label):
-            if conf < self.traffic_min_conf:
-                return False
-            return True
+        if cls_state == "unknown":
+            result["state"] = "unknown"
+            result["source"] = "classifier_unknown"
+            result["final_reason"] = (
+                f"classifier_unknown:conf={cls_conf:.3f};hsv={hsv_state}:{hsv_reason}"
+            )
+            return result
 
-        return False
-
-    def apply_person_temporal_hold(self, detections):
-        current_persons = [d for d in detections if d["label"] == "person"]
-
-        strong_persons = [
-            d for d in current_persons
-            if d["confidence"] >= self.person_min_conf
-        ]
-
-        if len(strong_persons) > 0:
-            self.last_person_detections = strong_persons
-            self.person_missing_count = 0
-            return detections
-
-        if len(current_persons) > 0:
-            if len(self.last_person_detections) > 0:
-                merged = detections + self.last_person_detections
-                self.person_missing_count = 0
-                return merged
-
-        if len(self.last_person_detections) > 0 and self.person_missing_count < self.person_hold_frames:
-            held = []
-
-            for det in self.last_person_detections:
-                copied = dict(det)
-                copied["held"] = True
-                copied["confidence"] = max(0.01, copied["confidence"] * 0.90)
-                held.append(copied)
-
-            self.person_missing_count += 1
-            return detections + held
-
-        self.last_person_detections = []
-        self.person_missing_count = 0
-        return detections
-
-    def remove_duplicate_detections(self, detections):
-        vehicles = [d for d in detections if self.is_vehicle(d["label"])]
-        others = [d for d in detections if not self.is_vehicle(d["label"])]
-
-        vehicles = sorted(
-            vehicles,
-            key=lambda d: d["confidence"] * 2.0 + d["area_ratio"],
-            reverse=True,
+        result["state"] = cls_state
+        result["source"] = "classifier"
+        result["final_reason"] = (
+            f"classifier_ok:state={cls_state},conf={cls_conf:.3f};hsv={hsv_state}:{hsv_reason}"
         )
+        return result
 
-        kept = []
+    def is_vehicle(self, label):
+        return label == "vehicle"
 
-        for det in vehicles:
-            duplicate = False
+    def is_person(self, label):
+        return label == "person"
 
-            for old in kept:
-                if self.iou(det["bbox"], old["bbox"]) > 0.55:
-                    duplicate = True
-                    break
+    def is_motorcycle(self, label):
+        return label == "motorcycle"
 
-            if not duplicate:
-                kept.append(det)
+    def is_traffic_light(self, label):
+        return label == "traffic_light"
 
-        return kept + others
-
-    def iou(self, a, b):
-        ax1, ay1, ax2, ay2 = a
-        bx1, by1, bx2, by2 = b
-
-        ix1 = max(ax1, bx1)
-        iy1 = max(ay1, by1)
-        ix2 = min(ax2, bx2)
-        iy2 = min(ay2, by2)
-
-        iw = max(0.0, ix2 - ix1)
-        ih = max(0.0, iy2 - iy1)
-        inter = iw * ih
-
-        area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-        area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-
-        union = area_a + area_b - inter
-
-        if union <= 0:
-            return 0.0
-
-        return inter / union
+    def is_traffic_sign(self, label):
+        return label == "traffic_sign"
 
     def draw_detection(self, frame, det):
         x1, y1, x2, y2 = [int(v) for v in det["bbox"]]
-        label = det["label"]
-        conf = det["confidence"]
-        held = bool(det.get("held", False))
 
-        if label == "person":
+        label = det.get("label", "unknown")
+        original_label = det.get("original_label", label)
+        conf = float(det.get("confidence", 0.0))
+
+        if self.is_person(label):
             color = (255, 0, 0)
-        elif label == "car":
+            text = f"person/{original_label} {conf:.2f}"
+
+        elif self.is_vehicle(label):
             color = (0, 255, 0)
-        elif label == "traffic_light":
+            text = f"vehicle/{original_label} {conf:.2f}"
+
+        elif self.is_motorcycle(label):
+            color = (255, 0, 255)
+            text = f"motorcycle/{original_label} {conf:.2f}"
+
+        elif self.is_traffic_light(label):
             state = det.get("traffic_light_state", "unknown")
+            state_conf = det.get("traffic_light_state_confidence", None)
 
             if state == "red":
                 color = (0, 0, 255)
@@ -608,39 +757,28 @@ class PerceptionNode(Node):
             elif state == "green":
                 color = (0, 255, 0)
             else:
-                color = (0, 255, 255)
-        elif label == "traffic_sign":
-            color = (0, 255, 255)
-        else:
-            color = (0, 255, 255)
+                color = (180, 180, 180)
 
-        thickness = 1 if held else 2
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-
-        if label == "traffic_light":
-            state = det.get("traffic_light_state", "unknown")
-            source = det.get("source", "")
-
-            if source == "sim_color_fallback":
-                text = f"TRAFFIC LIGHT: {state.upper()} {conf:.2f}"
+            if state_conf is not None:
+                text = f"traffic_light {state} {conf:.2f}/{float(state_conf):.2f}"
             else:
-                text = f"{label} {state} {conf:.2f}"
+                text = f"traffic_light {state} {conf:.2f}"
 
-        elif label == "traffic_sign":
+        elif self.is_traffic_sign(label):
+            color = (0, 255, 255)
             sign_type = det.get("sign_type", "unknown")
-            sign_conf = det.get("sign_confidence", 0.0)
-            pretty_name = self.pretty_sign_name(sign_type)
+            sign_name = self.pretty_sign_name(sign_type)
 
             if sign_type != "unknown":
-                text = f"LEVHA: {pretty_name} {sign_conf:.2f}"
+                text = f"LEVHA: {sign_name} {conf:.2f}"
             else:
-                text = f"LEVHA: Bilinmiyor {sign_conf:.2f}"
+                text = f"traffic_sign/{original_label} {conf:.2f}"
 
         else:
-            text = f"{label} {conf:.2f}"
+            color = (255, 255, 255)
+            text = f"{label}/{original_label} {conf:.2f}"
 
-        if held:
-            text = f"{text} hold"
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
 
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.50
@@ -648,12 +786,13 @@ class PerceptionNode(Node):
 
         (tw, th), _ = cv2.getTextSize(text, font, font_scale, font_thickness)
 
-        tx1 = x1
+        tx1 = max(0, x1)
         ty1 = max(0, y1 - th - 8)
         tx2 = min(frame.shape[1] - 1, x1 + tw + 8)
-        ty2 = y1
+        ty2 = max(0, y1)
 
         cv2.rectangle(frame, (tx1, ty1), (tx2, ty2), color, -1)
+
         cv2.putText(
             frame,
             text,
@@ -665,7 +804,7 @@ class PerceptionNode(Node):
             cv2.LINE_AA,
         )
 
-    def draw_text(self, frame, text, x, y, color=(255, 255, 255), scale=0.52, thickness=2):
+    def draw_text(self, frame, text, x, y, color=(255, 255, 255), scale=0.55, thickness=2):
         cv2.putText(
             frame,
             str(text),
@@ -679,87 +818,115 @@ class PerceptionNode(Node):
 
     def make_debug_canvas(self, frame, detections):
         h, w = frame.shape[:2]
-        panel_w = 470
+        panel_w = 430
 
-        canvas = np.zeros((h, w + panel_w, 3), dtype=np.uint8)
-        canvas[:, :w] = frame
-
-        panel = canvas[:, w:w + panel_w]
-        panel[:, :] = (45, 45, 45)
-
-        vehicles = len([d for d in detections if self.is_vehicle(d["label"])])
-        persons = len([d for d in detections if self.is_person(d["label"])])
-        traffic_lights = len([d for d in detections if d["label"] == "traffic_light"])
-        traffic_signs = len([d for d in detections if d["label"] == "traffic_sign"])
-
-        states = [
-            d.get("traffic_light_state", "unknown")
-            for d in detections
-            if d["label"] == "traffic_light"
-        ]
-
-        signs = [
-            self.pretty_sign_name(d.get("sign_type", "unknown"))
-            for d in detections
-            if d["label"] == "traffic_sign"
-        ]
-
-        state_text = ",".join(states) if len(states) > 0 else "-"
-        sign_text = ",".join(signs[:4]) if len(signs) > 0 else "-"
-
-        decision = self.latest_decision.get("decision", "-")
-        risk = self.latest_decision.get("risk", "-")
-        target_speed = self.latest_decision.get("target_speed", "-")
-        reason = self.latest_decision.get("reason", "-")
-        distance_est = self.latest_decision.get("distance_est", "-")
-        traffic_light_state = self.latest_decision.get("traffic_light_state", "-")
-        person_risk = self.latest_decision.get("person_risk", "-")
-
-        active_sign = self.latest_decision.get("active_sign")
-        active_sign_name = "-"
-        active_sign_type = "-"
-
-        if active_sign:
-            active_sign_name = active_sign.get("sign_name", "-")
-            active_sign_type = active_sign.get("sign_type", "-")
-
-        if decision == "STOP":
-            decision_color = (0, 0, 255)
-        elif decision == "SLOW":
-            decision_color = (0, 255, 255)
-        elif decision == "GO":
-            decision_color = (0, 255, 0)
-        else:
-            decision_color = (255, 255, 255)
+        canvas = cv2.copyMakeBorder(
+            frame,
+            0,
+            0,
+            0,
+            panel_w,
+            cv2.BORDER_CONSTANT,
+            value=(45, 45, 45),
+        )
 
         px = w + 20
 
-        self.draw_text(canvas, "ADAS DEBUG PANEL", px, 35, (255, 255, 255), 0.70, 2)
+        vehicles = len([d for d in detections if d.get("label") == "vehicle"])
+        persons = len([d for d in detections if d.get("label") == "person"])
+        motorcycles = len([d for d in detections if d.get("label") == "motorcycle"])
+        traffic_lights = len([d for d in detections if d.get("label") == "traffic_light"])
+        traffic_signs = len([d for d in detections if d.get("label") == "traffic_sign"])
 
-        self.draw_text(canvas, "DETECTION", px, 80, (200, 200, 200), 0.58, 2)
-        self.draw_text(canvas, f"Vehicles      : {vehicles}", px, 112)
-        self.draw_text(canvas, f"Persons       : {persons}", px, 140)
-        self.draw_text(canvas, f"TrafficLight  : {traffic_lights}", px, 168)
-        self.draw_text(canvas, f"TrafficSign   : {traffic_signs}", px, 196)
-        self.draw_text(canvas, f"Light States  : {state_text}", px, 224)
-        self.draw_text(canvas, f"Signs         : {sign_text}", px, 252, (255, 255, 255), 0.45, 1)
+        others = len([
+            d for d in detections
+            if d.get("label") not in [
+                "vehicle",
+                "person",
+                "motorcycle",
+                "traffic_light",
+                "traffic_sign",
+            ]
+        ])
 
-        cv2.line(canvas, (w + 15, 280), (w + panel_w - 15, 280), (100, 100, 100), 1)
+        light_states = [
+            d.get("traffic_light_state", "unknown")
+            for d in detections
+            if d.get("label") == "traffic_light"
+        ]
 
-        self.draw_text(canvas, "DECISION", px, 320, (200, 200, 200), 0.58, 2)
-        self.draw_text(canvas, f"Decision      : {decision}", px, 360, decision_color, 0.75, 2)
-        self.draw_text(canvas, f"Risk          : {risk}", px, 395, decision_color, 0.60, 2)
-        self.draw_text(canvas, f"Target Speed  : {target_speed}", px, 425)
-        self.draw_text(canvas, f"Front Dist    : {distance_est}", px, 455)
-        self.draw_text(canvas, f"Rule          : {reason}", px, 485, (255, 255, 255), 0.45, 1)
+        sign_names = [
+            self.pretty_sign_name(d.get("sign_type", "unknown"))
+            for d in detections
+            if d.get("label") == "traffic_sign"
+        ]
 
-        cv2.line(canvas, (w + 15, 515), (w + panel_w - 15, 515), (100, 100, 100), 1)
+        light_text = ",".join(light_states[:5]) if light_states else "-"
+        sign_text = ",".join(sign_names[:5]) if sign_names else "-"
 
-        self.draw_text(canvas, "ACTIVE INPUTS", px, 555, (200, 200, 200), 0.58, 2)
-        self.draw_text(canvas, f"Light         : {traffic_light_state}", px, 590)
-        self.draw_text(canvas, f"Sign          : {active_sign_name}", px, 620, (255, 255, 255), 0.48, 1)
-        self.draw_text(canvas, f"Sign Type     : {active_sign_type}", px, 648, (255, 255, 255), 0.45, 1)
-        self.draw_text(canvas, f"Person Risk   : {person_risk}", px, 676)
+        self.draw_text(canvas, "ADAS PERCEPTION", px, 35, (255, 255, 255), 0.70, 2)
+        self.draw_text(canvas, "YOLO + TL STATE CLASSIFIER", px, 65, (0, 255, 255), 0.48, 2)
+
+        self.draw_text(canvas, f"Model imgsz   : {self.imgsz}", px, 105)
+        self.draw_text(canvas, f"Raw Conf      : {self.raw_conf_threshold:.3f}", px, 132)
+        self.draw_text(canvas, f"Person Conf   : {self.person_conf_threshold:.3f}", px, 159)
+        self.draw_text(canvas, f"Vehicle Conf  : {self.vehicle_conf_threshold:.2f}", px, 186)
+        self.draw_text(canvas, f"Motor Conf    : {self.motorcycle_conf_threshold:.2f}", px, 213)
+        self.draw_text(canvas, f"Light Conf    : {self.traffic_light_conf_threshold:.2f}", px, 240)
+        self.draw_text(canvas, f"TL State Thr  : {self.tl_state_conf_threshold:.2f}", px, 267)
+        self.draw_text(canvas, f"TL Cls Ready  : {self.tl_state_ready}", px, 294)
+
+        cv2.line(canvas, (w + 15, 320), (w + panel_w - 15, 320), (100, 100, 100), 1)
+
+        self.draw_text(canvas, "DETECTIONS", px, 355, (200, 200, 200), 0.60, 2)
+        self.draw_text(canvas, f"Vehicles      : {vehicles}", px, 392)
+        self.draw_text(canvas, f"Persons       : {persons}", px, 419)
+        self.draw_text(canvas, f"Motorcycles   : {motorcycles}", px, 446)
+        self.draw_text(canvas, f"TrafficLight  : {traffic_lights}", px, 473)
+        self.draw_text(canvas, f"TrafficSign   : {traffic_signs}", px, 500)
+        self.draw_text(canvas, f"Others        : {others}", px, 527)
+
+        cv2.line(canvas, (w + 15, 555), (w + panel_w - 15, 555), (100, 100, 100), 1)
+
+        self.draw_text(canvas, "MODEL OUTPUT", px, 590, (200, 200, 200), 0.60, 2)
+        self.draw_text(canvas, f"Light State   : {light_text}", px, 625)
+        self.draw_text(canvas, f"Signs         : {sign_text}", px, 655, (255, 255, 255), 0.45, 1)
+
+        y = 690
+        for det in detections[:7]:
+            label = det.get("label", "-")
+            original = det.get("original_label", "-")
+            conf = float(det.get("confidence", 0.0))
+
+            if label == "traffic_light":
+                state = det.get("traffic_light_state", "unknown")
+                source = det.get("traffic_light_state_source", "-")
+                state_conf = det.get("traffic_light_state_confidence", None)
+                hsv_state = det.get("traffic_light_hsv_state", "-")
+                probs = det.get("traffic_light_state_probs", {})
+                reason = det.get("traffic_light_color_reason", "-")
+
+                state_conf_text = "-" if state_conf is None else f"{float(state_conf):.2f}"
+                p_red = float(probs.get("red", 0.0))
+                p_yellow = float(probs.get("yellow", 0.0))
+                p_green = float(probs.get("green", 0.0))
+                p_unknown = float(probs.get("unknown", 0.0))
+
+                line = f"TL {state} det={conf:.2f} cls={state_conf_text} src={source[:12]}"
+                self.draw_text(canvas, line, px, y, (255, 255, 255), 0.32, 1)
+                y += 18
+
+                line2 = f"P R{p_red:.2f} Y{p_yellow:.2f} G{p_green:.2f} U{p_unknown:.2f} HSV={hsv_state}"
+                self.draw_text(canvas, line2, px, y, (220, 220, 220), 0.29, 1)
+                y += 18
+
+                self.draw_text(canvas, f"reason: {str(reason)[:36]}", px, y, (220, 220, 220), 0.28, 1)
+                y += 22
+
+            else:
+                line = f"{label}/{original} {conf:.2f}"
+                self.draw_text(canvas, line, px, y, (255, 255, 255), 0.36, 1)
+                y += 22
 
         return canvas
 
@@ -773,10 +940,12 @@ class PerceptionNode(Node):
         frame_h, frame_w = frame.shape[:2]
         annotated = frame.copy()
 
+        detections = []
+
         try:
             results = self.model.predict(
                 source=frame,
-                conf=self.conf_threshold,
+                conf=self.raw_conf_threshold,
                 iou=self.iou_threshold,
                 imgsz=self.imgsz,
                 max_det=self.max_det,
@@ -785,9 +954,6 @@ class PerceptionNode(Node):
         except Exception as exc:
             self.get_logger().error(f"YOLO predict hata: {exc}")
             return
-
-        raw_detections = []
-        clean_detections = []
 
         if len(results) > 0:
             result = results[0]
@@ -798,100 +964,186 @@ class PerceptionNode(Node):
                     conf = float(box.conf[0].item())
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
 
-                    original_label = self.model.names.get(cls_id, str(cls_id))
+                    original_label = self.get_yolo_name(cls_id)
                     label = self.normalize_label(original_label)
+
+                    class_threshold = self.get_class_threshold(label)
+
+                    if conf < class_threshold:
+                        self.get_logger().info(
+                            f"FILTERED_LOW_CONF "
+                            f"class_id={cls_id} "
+                            f"original={original_label} "
+                            f"mapped_label={label} "
+                            f"conf={conf:.3f} "
+                            f"required={class_threshold:.3f}",
+                            throttle_duration_sec=0.5,
+                        )
+                        continue
+
+                    bbox_w = max(1.0, float(x2 - x1))
+                    bbox_h = max(1.0, float(y2 - y1))
+                    area_ratio = (bbox_w * bbox_h) / float(frame_w * frame_h)
 
                     det = {
                         "class_id": cls_id,
                         "label": label,
                         "original_label": original_label,
                         "confidence": conf,
-                        "bbox": [float(x1), float(y1), float(x2), float(y2)],
+                        "bbox": [
+                            float(x1),
+                            float(y1),
+                            float(x2),
+                            float(y2),
+                        ],
+                        "center_x": float((x1 + x2) / 2.0),
+                        "center_y": float((y1 + y2) / 2.0),
+                        "bbox_width": float(bbox_w),
+                        "bbox_height": float(bbox_h),
+                        "area_ratio": float(area_ratio),
+                        "source": "model_only_yolo",
                     }
 
                     if label == "traffic_light":
-                        det["traffic_light_state"] = self.estimate_traffic_light_state(
+                        light_result = self.classify_traffic_light_state(
                             frame,
                             det["bbox"],
                         )
+
+                        det["traffic_light_state"] = light_result["state"]
+                        det["traffic_light_state_source"] = light_result["source"]
+                        det["traffic_light_state_confidence"] = light_result["state_confidence"]
+                        det["traffic_light_state_probs"] = light_result["classifier_probs"]
+                        det["traffic_light_state_classifier_reason"] = light_result["classifier_reason"]
+
+                        det["traffic_light_hsv_state"] = light_result["hsv_state"]
+                        det["traffic_light_color_source"] = light_result["source"]
+                        det["traffic_light_color_scores"] = light_result["hsv_scores"]
+                        det["traffic_light_color_reason"] = light_result["final_reason"]
+                        det["traffic_light_hsv_reason"] = light_result["hsv_reason"]
 
                     if label == "traffic_sign":
-                        sign_type, sign_confidence = self.classify_traffic_sign(
-                            frame,
-                            det["bbox"],
-                        )
+                        sign_type = self.get_sign_type_from_label(original_label)
                         det["sign_type"] = sign_type
-                        det["sign_confidence"] = sign_confidence
                         det["sign_name"] = self.pretty_sign_name(sign_type)
+                        det["sign_confidence"] = conf
 
-                    raw_detections.append(det)
+                    detections.append(det)
 
-                    if self.pass_filter(det, frame_w, frame_h):
-                        clean_detections.append(det)
+                    model_name = (
+                        self.model.names.get(cls_id, str(cls_id))
+                        if isinstance(self.model.names, dict)
+                        else self.model.names[cls_id]
+                    )
 
-        clean_detections = self.remove_duplicate_detections(clean_detections)
-        clean_detections = self.apply_person_temporal_hold(clean_detections)
-
-        if self.sim_red_light_fallback:
-            sim_light = self.detect_sim_traffic_light(frame)
-
-            if sim_light is not None:
-                filtered_detections = []
-
-                for det in clean_detections:
-                    if det["label"] == "traffic_sign":
-                        overlap = self.iou(det["bbox"], sim_light["bbox"])
-                        sign_conf = float(det.get("sign_confidence", 0.0))
-
-                        if overlap > 0.15 or sign_conf < 0.35:
-                            continue
-
-                    filtered_detections.append(det)
-
-                clean_detections = filtered_detections
-
-                already_has_same_light = any(
-                    d["label"] == "traffic_light"
-                    and d.get("traffic_light_state") == sim_light.get("traffic_light_state")
-                    for d in clean_detections
-                )
-
-                if not already_has_same_light:
-                    clean_detections.append(sim_light)
-
-        for det in clean_detections:
-            self.draw_detection(annotated, det)
-
-        debug_canvas = self.make_debug_canvas(annotated, clean_detections)
+                    if label == "traffic_light":
+                        self.get_logger().info(
+                            f"MODEL_DET "
+                            f"class_id={cls_id} "
+                            f"model_name={model_name} "
+                            f"original={original_label} "
+                            f"mapped_label={label} "
+                            f"conf={conf:.3f} "
+                            f"state={det.get('traffic_light_state')} "
+                            f"state_conf={det.get('traffic_light_state_confidence')} "
+                            f"state_source={det.get('traffic_light_state_source')} "
+                            f"probs={det.get('traffic_light_state_probs')} "
+                            f"hsv_state={det.get('traffic_light_hsv_state')} "
+                            f"hsv_scores={det.get('traffic_light_color_scores')} "
+                            f"reason={det.get('traffic_light_color_reason')} "
+                            f"bbox={[round(float(v), 1) for v in det['bbox']]}",
+                            throttle_duration_sec=0.3,
+                        )
+                    else:
+                        self.get_logger().info(
+                            f"MODEL_DET "
+                            f"class_id={cls_id} "
+                            f"model_name={model_name} "
+                            f"original={original_label} "
+                            f"mapped_label={label} "
+                            f"conf={conf:.3f} "
+                            f"bbox={[round(float(v), 1) for v in det['bbox']]}",
+                            throttle_duration_sec=0.3,
+                        )
 
         active_light_state = "unknown"
         active_light_confidence = None
+        active_light_state_confidence = None
+        active_light_state_source = None
+        active_light_color_scores = None
+        active_light_color_reason = None
+        active_light_state_probs = None
 
         traffic_lights = [
-            d for d in clean_detections
-            if d["label"] == "traffic_light"
+            d for d in detections
+            if d.get("label") == "traffic_light"
         ]
 
-        if len(traffic_lights) > 0:
+        if traffic_lights:
+            known_lights = [
+                d for d in traffic_lights
+                if d.get("traffic_light_state", "unknown") != "unknown"
+            ]
+
+            pool = known_lights if known_lights else traffic_lights
+
             best_light = sorted(
-                traffic_lights,
-                key=lambda d: d.get("confidence", 0.0),
+                pool,
+                key=lambda d: (
+                    float(d.get("bbox_width", 0.0)) * float(d.get("bbox_height", 0.0)),
+                    float(d.get("traffic_light_state_confidence") or 0.0),
+                    float(d.get("confidence", 0.0)),
+                ),
                 reverse=True,
             )[0]
+
             active_light_state = best_light.get("traffic_light_state", "unknown")
-            active_light_confidence = best_light.get("confidence", None)
+            active_light_confidence = float(best_light.get("confidence", 0.0))
+            active_light_state_confidence = best_light.get("traffic_light_state_confidence", None)
+            active_light_state_source = best_light.get("traffic_light_state_source", None)
+            active_light_color_scores = best_light.get("traffic_light_color_scores", None)
+            active_light_color_reason = best_light.get("traffic_light_color_reason", None)
+            active_light_state_probs = best_light.get("traffic_light_state_probs", None)
+
+        for det in detections:
+            self.draw_detection(annotated, det)
+
+        debug_canvas = self.make_debug_canvas(annotated, detections)
 
         payload = {
             "stamp": time.time(),
             "image_width": frame_w,
             "image_height": frame_h,
-            "detections": clean_detections,
+            "model_path": self.model_path,
+            "model_only": True,
+            "raw_conf_threshold": self.raw_conf_threshold,
+            "person_conf_threshold": self.person_conf_threshold,
+            "vehicle_conf_threshold": self.vehicle_conf_threshold,
+            "motorcycle_conf_threshold": self.motorcycle_conf_threshold,
+            "traffic_light_conf_threshold": self.traffic_light_conf_threshold,
+            "traffic_sign_conf_threshold": self.traffic_sign_conf_threshold,
+            "iou_threshold": self.iou_threshold,
+            "imgsz": self.imgsz,
+            "max_det": self.max_det,
+
+            "traffic_light_state_classifier_enabled": self.tl_state_classifier_enabled,
+            "traffic_light_state_classifier_ready": self.tl_state_ready,
+            "traffic_light_state_model_path": self.tl_state_model_path,
+            "traffic_light_state_conf_threshold": self.tl_state_conf_threshold,
+
+            "detections": detections,
+
             "traffic_light_state": active_light_state,
             "traffic_light_confidence": active_light_confidence,
+            "traffic_light_state_confidence": active_light_state_confidence,
+            "traffic_light_state_source": active_light_state_source,
+            "traffic_light_state_probs": active_light_state_probs,
+            "traffic_light_color_scores": active_light_color_scores,
+            "traffic_light_color_reason": active_light_color_reason,
         }
 
         msg_out = String()
-        msg_out.data = json.dumps(payload)
+        msg_out.data = json.dumps(payload, ensure_ascii=False)
         self.det_pub.publish(msg_out)
 
         try:

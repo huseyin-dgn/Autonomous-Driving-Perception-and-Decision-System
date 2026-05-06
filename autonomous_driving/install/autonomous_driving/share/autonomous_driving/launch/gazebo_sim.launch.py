@@ -1,1 +1,0 @@
-/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/build/autonomous_driving/launch/gazebo_sim.launch.py
