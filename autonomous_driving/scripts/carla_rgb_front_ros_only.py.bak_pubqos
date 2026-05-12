@@ -20,7 +20,11 @@ class CarlaRGBFrontROSOnly(Node):
         self.client.set_timeout(args.timeout)
         self.world = self.client.get_world()
 
-        self.publisher = self.create_publisher(Image, "/adas/camera/front/image_raw", 10, )
+        self.publisher = self.create_publisher(
+            Image,
+            "/adas/camera/front/image_raw",
+            10,
+        )
 
         self.camera = None
         self.frame_count = 0

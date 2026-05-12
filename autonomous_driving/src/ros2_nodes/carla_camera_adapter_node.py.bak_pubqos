@@ -11,7 +11,11 @@ class CarlaCameraAdapter(Node):
     def __init__(self):
         super().__init__("carla_camera_adapter")
 
-        self.pub = self.create_publisher(Image, "/adas/camera/front/image_raw", 10, )
+        self.pub = self.create_publisher(
+            Image,
+            "/adas/camera/front/image_raw",
+            10,
+        )
 
         self.bridge = CvBridge()
 

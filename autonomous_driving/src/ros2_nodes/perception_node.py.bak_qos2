@@ -144,7 +144,12 @@ class PerceptionNode(Node):
 
         self.window_name = "ADAS PERCEPTION DEBUG"
 
-        self.sub = self.create_subscription(Image, self.image_topic, self.image_callback, qos_profile_sensor_data, )
+        self.sub = self.create_subscription(
+            Image,
+            self.image_topic,
+            self.image_callback,
+            10,
+        )
 
         self.det_pub = self.create_publisher(
             String,
@@ -551,108 +556,6 @@ class PerceptionNode(Node):
 
         return best_color, scores, "region_hsv_ok"
 
-    def classify_traffic_light_by_lit_position(self, crop):
-        if crop is None or crop.size == 0:
-            return {
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "empty_crop_position",
-                "scores": {},
-            }
-
-        try:
-            h, w = crop.shape[:2]
-
-            if h < 20 or w < 10:
-                return {
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": f"crop_too_small_position:{w}x{h}",
-                    "scores": {},
-                }
-
-            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-
-            # Sarı gövde/border etkisini azaltmak için iç bölgeye odaklan.
-            mx = max(1, int(w * 0.18))
-            my = max(1, int(h * 0.04))
-            inner = gray[my:h - my, mx:w - mx]
-
-            if inner.size == 0:
-                inner = gray
-
-            ih, iw = inner.shape[:2]
-
-            # En parlak pikselleri al. CARLA'da aktif lens renkli değil, beyaz/sarı parlak çıkıyor.
-            blur = cv2.GaussianBlur(inner, (3, 3), 0)
-            thresh_val = max(120, int(np.percentile(blur, 97)))
-            bright = (blur >= thresh_val).astype("uint8")
-
-            # Çok az parlaklık varsa state çıkarma.
-            bright_count = int(bright.sum())
-            if bright_count < 5:
-                return {
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": f"not_enough_bright_pixels:{bright_count}",
-                    "scores": {},
-                }
-
-            third1 = int(ih / 3)
-            third2 = int(2 * ih / 3)
-
-            top_score = int(bright[:third1, :].sum())
-            mid_score = int(bright[third1:third2, :].sum())
-            bot_score = int(bright[third2:, :].sum())
-
-            scores = {
-                "red": top_score,
-                "yellow": mid_score,
-                "green": bot_score,
-            }
-
-            best_state = max(scores, key=scores.get)
-            best_score = scores[best_state]
-            total = max(1, top_score + mid_score + bot_score)
-
-            ordered = sorted(scores.values(), reverse=True)
-            second = ordered[1] if len(ordered) > 1 else 0
-
-            # Parlaklık tek bölgede baskın değilse unknown.
-            if best_score < 5:
-                return {
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": f"best_position_score_too_low:{best_score}",
-                    "scores": scores,
-                }
-
-            confidence = float(best_score / total)
-
-            if second > 0 and best_score < second * 1.35:
-                return {
-                    "state": "unknown",
-                    "confidence": confidence,
-                    "reason": f"ambiguous_position:best={best_score},second={second},scores={scores}",
-                    "scores": scores,
-                }
-
-            return {
-                "state": best_state,
-                "confidence": confidence,
-                "reason": f"lit_position_ok:{best_state}:scores={scores}",
-                "scores": scores,
-            }
-
-        except Exception as exc:
-            return {
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": f"position_error:{exc}",
-                "scores": {},
-            }
-
-
     def classify_traffic_light_state_model(self, frame, bbox):
         if not self.tl_state_ready or self.tl_state_model is None or self.tl_state_transform is None:
             return None
@@ -693,74 +596,6 @@ class PerceptionNode(Node):
                 "probs": {},
                 "reason": "classifier_empty_crop",
             }
-
-        # DEBUG: Traffic light state classifier'a giden gerçek crop'u kaydet.
-        # Bu crop, modelin red/yellow/green/unknown tahmini yaptığı görüntüdür.
-        if env_bool("SAVE_TL_STATE_CROPS", False):
-            try:
-                self.tl_crop_save_count = getattr(self, "tl_crop_save_count", 0) + 1
-
-                save_every = max(1, env_int("TL_STATE_CROP_SAVE_EVERY_N", 10))
-
-                if self.tl_crop_save_count % save_every == 0:
-                    save_dir = os.environ.get(
-                        "TL_STATE_CROP_SAVE_DIR",
-                        "/tmp/adas_tl_state_crops",
-                    )
-
-                    label = self.normalize_text(
-                        os.environ.get("TL_STATE_CROP_LABEL", "unknown")
-                    )
-
-                    os.makedirs(save_dir, exist_ok=True)
-
-                    ts = int(time.time() * 1000)
-
-                    crop_path = os.path.join(
-                        save_dir,
-                        (
-                            f"{label}_tl_crop_{ts}_"
-                            f"x{int(x1)}_y{int(y1)}_"
-                            f"w{int(bw)}_h{int(bh)}.png"
-                        ),
-                    )
-
-                    ok = cv2.imwrite(crop_path, crop)
-
-                    if ok:
-                        self.get_logger().info(
-                            f"TL_STATE_CROP_SAVED label={label} path={crop_path}",
-                            throttle_duration_sec=1.0,
-                        )
-                    else:
-                        self.get_logger().warning(
-                            f"TL_STATE_CROP_SAVE_FAILED path={crop_path}",
-                            throttle_duration_sec=1.0,
-                        )
-
-            except Exception as exc:
-                self.get_logger().warning(
-                    f"TL_STATE_CROP_SAVE_ERROR: {exc}",
-                    throttle_duration_sec=1.0,
-                )
-
-        if env_bool("TL_POSITION_STATE_ENABLED", False):
-            pos_result = self.classify_traffic_light_by_lit_position(crop)
-            pos_state = pos_result.get("state", "unknown")
-            pos_conf = float(pos_result.get("confidence", 0.0))
-
-            if pos_state in ["red", "yellow", "green"] and pos_conf >= env_float("TL_POSITION_STATE_CONF_THRESHOLD", 0.45):
-                return {
-                    "state": pos_state,
-                    "confidence": pos_conf,
-                    "probs": {
-                        "red": 1.0 if pos_state == "red" else 0.0,
-                        "yellow": 1.0 if pos_state == "yellow" else 0.0,
-                        "green": 1.0 if pos_state == "green" else 0.0,
-                        "unknown": 0.0,
-                    },
-                    "reason": f"position_classifier:{pos_result.get('reason', '-')}",
-                }
 
         rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         pil_img = PILImage.fromarray(rgb)

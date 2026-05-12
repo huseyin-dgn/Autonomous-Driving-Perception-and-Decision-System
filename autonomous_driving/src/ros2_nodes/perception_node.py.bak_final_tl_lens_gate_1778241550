@@ -16,7 +16,6 @@ from torchvision import models, transforms
 from PIL import Image as PILImage
 
 import rclpy
-from rclpy.qos import qos_profile_sensor_data
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -144,7 +143,12 @@ class PerceptionNode(Node):
 
         self.window_name = "ADAS PERCEPTION DEBUG"
 
-        self.sub = self.create_subscription(Image, self.image_topic, self.image_callback, qos_profile_sensor_data, )
+        self.sub = self.create_subscription(
+            Image,
+            self.image_topic,
+            self.image_callback,
+            10,
+        )
 
         self.det_pub = self.create_publisher(
             String,
@@ -551,108 +555,6 @@ class PerceptionNode(Node):
 
         return best_color, scores, "region_hsv_ok"
 
-    def classify_traffic_light_by_lit_position(self, crop):
-        if crop is None or crop.size == 0:
-            return {
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "empty_crop_position",
-                "scores": {},
-            }
-
-        try:
-            h, w = crop.shape[:2]
-
-            if h < 20 or w < 10:
-                return {
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": f"crop_too_small_position:{w}x{h}",
-                    "scores": {},
-                }
-
-            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-
-            # Sarı gövde/border etkisini azaltmak için iç bölgeye odaklan.
-            mx = max(1, int(w * 0.18))
-            my = max(1, int(h * 0.04))
-            inner = gray[my:h - my, mx:w - mx]
-
-            if inner.size == 0:
-                inner = gray
-
-            ih, iw = inner.shape[:2]
-
-            # En parlak pikselleri al. CARLA'da aktif lens renkli değil, beyaz/sarı parlak çıkıyor.
-            blur = cv2.GaussianBlur(inner, (3, 3), 0)
-            thresh_val = max(120, int(np.percentile(blur, 97)))
-            bright = (blur >= thresh_val).astype("uint8")
-
-            # Çok az parlaklık varsa state çıkarma.
-            bright_count = int(bright.sum())
-            if bright_count < 5:
-                return {
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": f"not_enough_bright_pixels:{bright_count}",
-                    "scores": {},
-                }
-
-            third1 = int(ih / 3)
-            third2 = int(2 * ih / 3)
-
-            top_score = int(bright[:third1, :].sum())
-            mid_score = int(bright[third1:third2, :].sum())
-            bot_score = int(bright[third2:, :].sum())
-
-            scores = {
-                "red": top_score,
-                "yellow": mid_score,
-                "green": bot_score,
-            }
-
-            best_state = max(scores, key=scores.get)
-            best_score = scores[best_state]
-            total = max(1, top_score + mid_score + bot_score)
-
-            ordered = sorted(scores.values(), reverse=True)
-            second = ordered[1] if len(ordered) > 1 else 0
-
-            # Parlaklık tek bölgede baskın değilse unknown.
-            if best_score < 5:
-                return {
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": f"best_position_score_too_low:{best_score}",
-                    "scores": scores,
-                }
-
-            confidence = float(best_score / total)
-
-            if second > 0 and best_score < second * 1.35:
-                return {
-                    "state": "unknown",
-                    "confidence": confidence,
-                    "reason": f"ambiguous_position:best={best_score},second={second},scores={scores}",
-                    "scores": scores,
-                }
-
-            return {
-                "state": best_state,
-                "confidence": confidence,
-                "reason": f"lit_position_ok:{best_state}:scores={scores}",
-                "scores": scores,
-            }
-
-        except Exception as exc:
-            return {
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": f"position_error:{exc}",
-                "scores": {},
-            }
-
-
     def classify_traffic_light_state_model(self, frame, bbox):
         if not self.tl_state_ready or self.tl_state_model is None or self.tl_state_transform is None:
             return None
@@ -693,74 +595,6 @@ class PerceptionNode(Node):
                 "probs": {},
                 "reason": "classifier_empty_crop",
             }
-
-        # DEBUG: Traffic light state classifier'a giden gerçek crop'u kaydet.
-        # Bu crop, modelin red/yellow/green/unknown tahmini yaptığı görüntüdür.
-        if env_bool("SAVE_TL_STATE_CROPS", False):
-            try:
-                self.tl_crop_save_count = getattr(self, "tl_crop_save_count", 0) + 1
-
-                save_every = max(1, env_int("TL_STATE_CROP_SAVE_EVERY_N", 10))
-
-                if self.tl_crop_save_count % save_every == 0:
-                    save_dir = os.environ.get(
-                        "TL_STATE_CROP_SAVE_DIR",
-                        "/tmp/adas_tl_state_crops",
-                    )
-
-                    label = self.normalize_text(
-                        os.environ.get("TL_STATE_CROP_LABEL", "unknown")
-                    )
-
-                    os.makedirs(save_dir, exist_ok=True)
-
-                    ts = int(time.time() * 1000)
-
-                    crop_path = os.path.join(
-                        save_dir,
-                        (
-                            f"{label}_tl_crop_{ts}_"
-                            f"x{int(x1)}_y{int(y1)}_"
-                            f"w{int(bw)}_h{int(bh)}.png"
-                        ),
-                    )
-
-                    ok = cv2.imwrite(crop_path, crop)
-
-                    if ok:
-                        self.get_logger().info(
-                            f"TL_STATE_CROP_SAVED label={label} path={crop_path}",
-                            throttle_duration_sec=1.0,
-                        )
-                    else:
-                        self.get_logger().warning(
-                            f"TL_STATE_CROP_SAVE_FAILED path={crop_path}",
-                            throttle_duration_sec=1.0,
-                        )
-
-            except Exception as exc:
-                self.get_logger().warning(
-                    f"TL_STATE_CROP_SAVE_ERROR: {exc}",
-                    throttle_duration_sec=1.0,
-                )
-
-        if env_bool("TL_POSITION_STATE_ENABLED", False):
-            pos_result = self.classify_traffic_light_by_lit_position(crop)
-            pos_state = pos_result.get("state", "unknown")
-            pos_conf = float(pos_result.get("confidence", 0.0))
-
-            if pos_state in ["red", "yellow", "green"] and pos_conf >= env_float("TL_POSITION_STATE_CONF_THRESHOLD", 0.45):
-                return {
-                    "state": pos_state,
-                    "confidence": pos_conf,
-                    "probs": {
-                        "red": 1.0 if pos_state == "red" else 0.0,
-                        "yellow": 1.0 if pos_state == "yellow" else 0.0,
-                        "green": 1.0 if pos_state == "green" else 0.0,
-                        "unknown": 0.0,
-                    },
-                    "reason": f"position_classifier:{pos_result.get('reason', '-')}",
-                }
 
         rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         pil_img = PILImage.fromarray(rgb)
@@ -922,27 +756,22 @@ class PerceptionNode(Node):
 
         return 0.0
 
-    def choose_active_traffic_light(self, detections, frame_w, frame_h, frame=None):
-        lights = []
-
-        for d in detections:
-            if d.get("label") != "traffic_light":
-                continue
-
-            if frame is not None:
-                if not self.normalize_or_drop_traffic_light_lens(frame, d):
-                    continue
-
-            state = str(d.get("traffic_light_state", "unknown")).lower().strip()
-            if state == "unknown" and self.tl_env_bool_safe("TL_DROP_UNKNOWN_LIGHTS", True):
-                continue
-
-            lights.append(d)
+    def choose_active_traffic_light(self, detections, frame_w, frame_h):
+        lights = [
+            d for d in detections
+            if d.get("label") == "traffic_light"
+            and not self.is_bad_carla_yellow_body_light(d)
+        ]
 
         if not lights:
             return None
 
-        red_priority = self.tl_env_bool_safe("TL_RED_PRIORITY", True)
+        min_state_conf = env_float("TL_ACTIVE_MIN_STATE_CONF", 0.60)
+        edge_margin = env_float("TL_ACTIVE_EDGE_MARGIN", 12.0)
+        min_w = env_float("TL_ACTIVE_MIN_W", 14.0)
+        min_h = env_float("TL_ACTIVE_MIN_H", 28.0)
+        min_area = env_float("TL_ACTIVE_MIN_AREA", 350.0)
+        red_priority = env_bool("TL_RED_PRIORITY", False)
 
         known_states = {"red", "yellow", "green"}
         candidates = []
@@ -957,31 +786,85 @@ class PerceptionNode(Node):
             bh = max(1.0, y2 - y1)
             area = bw * bh
             cx = (x1 + x2) / 2.0
+            cy = (y1 + y2) / 2.0
+            aspect = bh / bw
 
-            center_score = 1.0 - min(1.0, abs(cx - frame_w * 0.5) / max(1.0, frame_w * 0.5))
+            touches_edge = (
+                x1 <= edge_margin or
+                y1 <= edge_margin or
+                x2 >= frame_w - edge_margin or
+                y2 >= frame_h - edge_margin
+            )
+
+            too_small = (
+                bw < min_w or
+                bh < min_h or
+                area < min_area
+            )
+
+            bad_aspect = not (1.0 <= aspect <= 8.5)
+
+            if touches_edge or too_small or bad_aspect:
+                det["active_reject_reason"] = (
+                    f"edge={touches_edge},small={too_small},"
+                    f"aspect={aspect:.2f},bw={bw:.1f},bh={bh:.1f},area={area:.1f}"
+                )
+                continue
+
+            color_reason = str(det.get("traffic_light_color_reason", "")).lower()
+            color_scores = det.get("traffic_light_color_scores", {}) or {}
+            yellow_score = int(color_scores.get("yellow", 0) or 0)
+
+            body_like_yellow = (
+                state == "yellow" and
+                (
+                    "yellow_touches_border" in color_reason or
+                    "probably_body" in color_reason or
+                    "backside" in color_reason or
+                    "body_or_backside" in color_reason
+                )
+            )
+
+            if body_like_yellow:
+                det["active_reject_reason"] = (
+                    f"yellow_body_reject:reason={color_reason},yellow_score={yellow_score}"
+                )
+                continue
+
+            if state not in known_states:
+                det["active_reject_reason"] = f"unknown_state:{state}"
+                continue
+
+            if state_conf < min_state_conf:
+                det["active_reject_reason"] = f"low_state_conf:{state_conf:.3f}"
+                continue
+
+            center_score = 1.0 - min(
+                1.0,
+                abs(cx - frame_w * 0.5) / max(1.0, frame_w * 0.5)
+            )
+
+            upper_score = 1.0 - min(
+                1.0,
+                cy / max(1.0, frame_h)
+            )
 
             if red_priority:
                 state_priority = {
                     "red": 3,
                     "yellow": 2,
                     "green": 1,
-                    "unknown": 0,
                 }.get(state, 0)
             else:
-                state_priority = {
-                    "red": 1,
-                    "yellow": 1,
-                    "green": 1,
-                    "unknown": 0,
-                }.get(state, 0)
+                state_priority = 1
 
             score = (
-                1 if state in known_states else 0,
                 state_priority,
                 state_conf,
                 det_conf,
                 area,
                 center_score,
+                upper_score,
             )
 
             candidates.append((score, det))
@@ -989,7 +872,10 @@ class PerceptionNode(Node):
         if not candidates:
             return None
 
-        return sorted(candidates, key=lambda item: item[0], reverse=True)[0][1]
+        active = sorted(candidates, key=lambda item: item[0], reverse=True)[0][1]
+        return active
+
+
 
     def _tl_env_float(self, name, default):
         try:
@@ -1325,377 +1211,7 @@ class PerceptionNode(Node):
 
         return False
 
-
-    def tl_env_bool_safe(self, name, default=False):
-        try:
-            return env_bool(name, default)
-        except Exception:
-            import os
-            v = str(os.environ.get(name, str(int(default)))).lower().strip()
-            return v in ("1", "true", "yes", "on")
-
-    def tl_env_float_safe(self, name, default=0.0):
-        try:
-            return float(env_float(name, default))
-        except Exception:
-            import os
-            try:
-                return float(os.environ.get(name, default))
-            except Exception:
-                return float(default)
-
-    def tl_largest_components(self, mask, min_area=1):
-        import cv2
-        import numpy as np
-
-        if mask is None:
-            return []
-
-        m = mask.astype("uint8")
-        if m.max() <= 1:
-            m = m * 255
-
-        n, labels, stats, centroids = cv2.connectedComponentsWithStats(m, 8)
-        comps = []
-
-        for i in range(1, n):
-            x, y, w, h, area = stats[i]
-            if area < min_area:
-                continue
-
-            cx, cy = centroids[i]
-            comps.append({
-                "x": float(x),
-                "y": float(y),
-                "w": float(w),
-                "h": float(h),
-                "area": float(area),
-                "cx": float(cx),
-                "cy": float(cy),
-            })
-
-        comps.sort(key=lambda c: c["area"], reverse=True)
-        return comps
-
-    def validate_traffic_light_front_lens(self, frame, det):
-        import cv2
-        import numpy as np
-
-        if frame is None:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "no_frame",
-            }
-
-        if not isinstance(det, dict):
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "bad_det",
-            }
-
-        if det.get("label") != "traffic_light":
-            return {
-                "valid": True,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "not_traffic_light",
-            }
-
-        bbox = det.get("bbox", None)
-        if not bbox or len(bbox) != 4:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "no_bbox",
-            }
-
-        H, W = frame.shape[:2]
-        x1, y1, x2, y2 = [float(v) for v in bbox]
-
-        bw = max(1.0, x2 - x1)
-        bh = max(1.0, y2 - y1)
-        area = bw * bh
-        aspect = bh / bw
-
-        min_w = self.tl_env_float_safe("TL_FRONT_MIN_W", 8.0)
-        min_h = self.tl_env_float_safe("TL_FRONT_MIN_H", 18.0)
-        min_area = self.tl_env_float_safe("TL_FRONT_MIN_AREA", 120.0)
-        min_aspect = self.tl_env_float_safe("TL_FRONT_MIN_ASPECT", 1.20)
-        max_aspect = self.tl_env_float_safe("TL_FRONT_MAX_ASPECT", 5.50)
-
-        if bw < min_w or bh < min_h or area < min_area:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": f"too_small:bw={bw:.1f},bh={bh:.1f},area={area:.1f}",
-            }
-
-        if aspect < min_aspect or aspect > max_aspect:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": f"bad_aspect:aspect={aspect:.2f},bw={bw:.1f},bh={bh:.1f}",
-            }
-
-        pad_x = self.tl_env_float_safe("TL_FRONT_PAD_X", 0.12)
-        pad_y = self.tl_env_float_safe("TL_FRONT_PAD_Y", 0.12)
-
-        px = bw * pad_x
-        py = bh * pad_y
-
-        xx1 = max(0, int(x1 - px))
-        yy1 = max(0, int(y1 - py))
-        xx2 = min(W, int(x2 + px))
-        yy2 = min(H, int(y2 + py))
-
-        crop = frame[yy1:yy2, xx1:xx2]
-        if crop.size == 0:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": "empty_crop",
-            }
-
-        ch, cw = crop.shape[:2]
-        crop_area = max(1.0, float(ch * cw))
-
-        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-        h = hsv[:, :, 0]
-        sat = hsv[:, :, 1]
-        val = hsv[:, :, 2]
-
-        red_s = self.tl_env_float_safe("TL_HSV_RED_MIN_S", 70.0)
-        red_v = self.tl_env_float_safe("TL_HSV_RED_MIN_V", 80.0)
-
-        yellow_s = self.tl_env_float_safe("TL_HSV_YELLOW_MIN_S", 70.0)
-        yellow_v = self.tl_env_float_safe("TL_HSV_YELLOW_MIN_V", 90.0)
-
-        green_s = self.tl_env_float_safe("TL_HSV_GREEN_MIN_S", 45.0)
-        green_v = self.tl_env_float_safe("TL_HSV_GREEN_MIN_V", 70.0)
-
-        red_mask = (
-            (((h <= 10) | (h >= 170)) & (sat >= red_s) & (val >= red_v))
-        ).astype("uint8")
-
-        yellow_mask = (
-            ((h >= 17) & (h <= 42) & (sat >= yellow_s) & (val >= yellow_v))
-        ).astype("uint8")
-
-        green_mask = (
-            ((h >= 45) & (h <= 100) & (sat >= green_s) & (val >= green_v))
-        ).astype("uint8")
-
-        kernel = np.ones((3, 3), np.uint8)
-        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
-        yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_OPEN, kernel)
-        green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
-
-        dark_v = self.tl_env_float_safe("TL_DARK_MAX_V", 95.0)
-        dark_s_max = self.tl_env_float_safe("TL_DARK_MAX_S", 190.0)
-
-        dark_mask = ((val <= dark_v) & (sat <= dark_s_max)).astype("uint8")
-        dark_mask = cv2.morphologyEx(dark_mask, cv2.MORPH_OPEN, kernel)
-
-        min_color_blob = self.tl_env_float_safe("TL_MIN_COLOR_BLOB_AREA", 3.0)
-        min_dark_blob = self.tl_env_float_safe("TL_MIN_DARK_BLOB_AREA", 4.0)
-
-        red_comps = self.tl_largest_components(red_mask, min_color_blob)
-        yellow_comps = self.tl_largest_components(yellow_mask, min_color_blob)
-        green_comps = self.tl_largest_components(green_mask, min_color_blob)
-        dark_comps_raw = self.tl_largest_components(dark_mask, min_dark_blob)
-
-        dark_lens_comps = []
-        for c in dark_comps_raw:
-            ar = c["h"] / max(1.0, c["w"])
-            ratio = c["area"] / crop_area
-            touches = (
-                c["x"] <= 1 or
-                c["y"] <= 1 or
-                c["x"] + c["w"] >= cw - 2 or
-                c["y"] + c["h"] >= ch - 2
-            )
-
-            if 0.35 <= ar <= 2.80 and 0.002 <= ratio <= 0.30 and not touches:
-                dark_lens_comps.append(c)
-
-        min_dark_lenses = int(self.tl_env_float_safe("TL_MIN_DARK_LENS_COUNT", 1.0))
-
-        yellow_pixels = float(yellow_mask.sum())
-        red_pixels = float(red_mask.sum())
-        green_pixels = float(green_mask.sum())
-
-        yellow_ratio = yellow_pixels / crop_area
-        red_ratio = red_pixels / crop_area
-        green_ratio = green_pixels / crop_area
-        dark_ratio = float(dark_mask.sum()) / crop_area
-
-        max_yellow_body_ratio = self.tl_env_float_safe("TL_MAX_YELLOW_BODY_RATIO", 0.34)
-
-        # CARLA'nın sarı gövdesi/arka yüzü: çok sarı var, koyu lens/panel yok.
-        if yellow_ratio >= max_yellow_body_ratio and len(dark_lens_comps) < min_dark_lenses:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": (
-                    f"yellow_body_no_lens:"
-                    f"yellow_ratio={yellow_ratio:.3f},"
-                    f"dark_lens={len(dark_lens_comps)},"
-                    f"dark_ratio={dark_ratio:.3f}"
-                ),
-            }
-
-        candidates = []
-
-        def add_color_candidate(name, comps, total_ratio):
-            if not comps:
-                return
-
-            c = comps[0]
-            color_ratio = c["area"] / crop_area
-            touches = (
-                c["x"] <= 1 or
-                c["y"] <= 1 or
-                c["x"] + c["w"] >= cw - 2 or
-                c["y"] + c["h"] >= ch - 2
-            )
-
-            center_x_score = 1.0 - min(1.0, abs(c["cx"] - cw * 0.5) / max(1.0, cw * 0.5))
-            center_y_score = 1.0 - min(1.0, abs(c["cy"] - ch * 0.5) / max(1.0, ch * 0.5))
-
-            candidates.append({
-                "state": name,
-                "area": c["area"],
-                "ratio": color_ratio,
-                "total_ratio": total_ratio,
-                "touches": touches,
-                "center_x_score": center_x_score,
-                "center_y_score": center_y_score,
-                "comp": c,
-            })
-
-        add_color_candidate("red", red_comps, red_ratio)
-        add_color_candidate("yellow", yellow_comps, yellow_ratio)
-        add_color_candidate("green", green_comps, green_ratio)
-
-        if not candidates:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": (
-                    f"no_color_lens:"
-                    f"red={red_pixels:.0f},yellow={yellow_pixels:.0f},green={green_pixels:.0f},"
-                    f"dark_lens={len(dark_lens_comps)}"
-                ),
-            }
-
-        candidates.sort(
-            key=lambda c: (
-                c["area"],
-                c["center_x_score"],
-                c["center_y_score"],
-            ),
-            reverse=True,
-        )
-
-        best = candidates[0]
-
-        max_color_ratio = self.tl_env_float_safe("TL_MAX_COLOR_BLOB_RATIO", 0.28)
-        if best["ratio"] > max_color_ratio and len(dark_lens_comps) < min_dark_lenses:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": (
-                    f"color_blob_too_large_without_lens:"
-                    f"state={best['state']},ratio={best['ratio']:.3f},"
-                    f"dark_lens={len(dark_lens_comps)}"
-                ),
-            }
-
-        # Sarı gövde çoğu zaman border'a dayanır. Gerçek aktif lens genelde içeridedir.
-        if best["state"] == "yellow" and best["touches"] and len(dark_lens_comps) < min_dark_lenses:
-            return {
-                "valid": False,
-                "state": "unknown",
-                "confidence": 0.0,
-                "reason": (
-                    f"yellow_touches_border_without_lens:"
-                    f"ratio={best['ratio']:.3f},dark_lens={len(dark_lens_comps)}"
-                ),
-            }
-
-        if self.tl_env_bool_safe("TL_REQUIRE_DARK_LENS", True):
-            if len(dark_lens_comps) < min_dark_lenses:
-                return {
-                    "valid": False,
-                    "state": "unknown",
-                    "confidence": 0.0,
-                    "reason": (
-                        f"no_dark_lens_panel:"
-                        f"dark_lens={len(dark_lens_comps)},"
-                        f"state={best['state']},"
-                        f"color_ratio={best['ratio']:.3f}"
-                    ),
-                }
-
-        conf = min(1.0, max(0.05, best["area"] / max(1.0, crop_area * 0.025)))
-
-        return {
-            "valid": True,
-            "state": best["state"],
-            "confidence": float(conf),
-            "reason": (
-                f"front_lens_ok:"
-                f"state={best['state']},"
-                f"color_ratio={best['ratio']:.3f},"
-                f"dark_lens={len(dark_lens_comps)},"
-                f"dark_ratio={dark_ratio:.3f},"
-                f"yellow_ratio={yellow_ratio:.3f}"
-            ),
-        }
-
-    def normalize_or_drop_traffic_light_lens(self, frame, det):
-        if not isinstance(det, dict):
-            return False
-
-        if det.get("label") != "traffic_light":
-            return True
-
-        if not self.tl_env_bool_safe("TL_FRONT_LENS_GATE", True):
-            return True
-
-        result = self.validate_traffic_light_front_lens(frame, det)
-
-        if not result.get("valid", False):
-            det["drop_traffic_light"] = True
-            det["drop_traffic_light_reason"] = result.get("reason", "front_lens_invalid")
-            det["traffic_light_state"] = "unknown"
-            det["traffic_light_state_confidence"] = 0.0
-            det["traffic_light_state_source"] = "front_lens_gate_drop"
-            return False
-
-        det["drop_traffic_light"] = False
-        det["traffic_light_state"] = result.get("state", "unknown")
-        det["traffic_light_state_confidence"] = float(result.get("confidence", 0.0))
-        det["tl_state_confidence"] = float(result.get("confidence", 0.0))
-        det["traffic_light_state_source"] = "front_lens_gate"
-        det["traffic_light_color_reason"] = result.get("reason", "front_lens_ok")
-        return True
-
     def draw_detection(self, frame, det):
-        if det.get("label") == "traffic_light":
-            if not self.normalize_or_drop_traffic_light_lens(frame, det):
-                return frame
         if self.is_bad_carla_yellow_body_light(det):
             return frame
         x1, y1, x2, y2 = [int(v) for v in det["bbox"]]
@@ -2040,28 +1556,6 @@ class PerceptionNode(Node):
 
         detections = [d for d in detections if not self.is_bad_carla_yellow_body_light(d)]
 
-        if self.tl_env_bool_safe("TL_FRONT_LENS_GATE", True):
-            _tl_before = sum(1 for _d in detections if _d.get("label") == "traffic_light")
-            _filtered = []
-            _drop_reasons = []
-
-            for _d in detections:
-                if _d.get("label") == "traffic_light":
-                    if not self.normalize_or_drop_traffic_light_lens(frame, _d):
-                        _drop_reasons.append(_d.get("drop_traffic_light_reason", "front_lens_invalid"))
-                        continue
-
-                _filtered.append(_d)
-
-            detections = _filtered
-            _tl_after = sum(1 for _d in detections if _d.get("label") == "traffic_light")
-
-            if _tl_before != _tl_after:
-                self.get_logger().info(
-                    f"FINAL_TL_FRONT_LENS_GATE before={_tl_before} after={_tl_after} reasons={_drop_reasons[:4]}",
-                    throttle_duration_sec=0.5,
-                )
-
         active_light_state = "unknown"
         active_light_confidence = None
         active_light_color_scores = None
@@ -2071,7 +1565,7 @@ class PerceptionNode(Node):
         active_light_state_probs = None
         active_light_bbox = None
 
-        active_light = self.choose_active_traffic_light(detections, frame_w, frame_h, frame)
+        active_light = self.choose_active_traffic_light(detections, frame_w, frame_h)
 
         for det in detections:
             if det.get("label") == "traffic_light":

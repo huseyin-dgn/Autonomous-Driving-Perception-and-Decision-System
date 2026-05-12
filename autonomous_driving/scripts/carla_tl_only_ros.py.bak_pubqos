@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+import argparse
+import math
+import sys
+import time
+
+import carla
+import numpy as np
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from sensor_msgs.msg import Image
+
+
+def look_at(src, dst):
+    dx = dst.x - src.x
+    dy = dst.y - src.y
+    dz = dst.z - src.z
+
+    yaw = math.degrees(math.atan2(dy, dx))
+    dist_xy = math.sqrt(dx * dx + dy * dy)
+    pitch = math.degrees(math.atan2(dz, dist_xy))
+
+    return carla.Transform(
+        src,
+        carla.Rotation(pitch=pitch, yaw=yaw, roll=0.0)
+    )
+
+
+def get_offset_from_yaw(yaw_deg, side, distance):
+    yaw = math.radians(yaw_deg)
+
+    forward = carla.Vector3D(math.cos(yaw), math.sin(yaw), 0.0)
+    right = carla.Vector3D(-math.sin(yaw), math.cos(yaw), 0.0)
+
+    if side == "front":
+        return carla.Vector3D(forward.x * distance, forward.y * distance, 0.0)
+    if side == "back":
+        return carla.Vector3D(-forward.x * distance, -forward.y * distance, 0.0)
+    if side == "right":
+        return carla.Vector3D(right.x * distance, right.y * distance, 0.0)
+    if side == "left":
+        return carla.Vector3D(-right.x * distance, -right.y * distance, 0.0)
+
+    return carla.Vector3D(-forward.x * distance, -forward.y * distance, 0.0)
+
+
+class CarlaImagePublisher(Node):
+    def __init__(self, topic):
+        super().__init__("carla_tl_only_ros_publisher")
+        self.pub = self.create_publisher(Image, topic, qos_profile_sensor_data)
+        self.topic = topic
+        self.frame_count = 0
+        self.last_log_time = time.time()
+
+    def publish_carla_image(self, carla_image):
+        arr = np.frombuffer(carla_image.raw_data, dtype=np.uint8)
+        arr = arr.reshape((carla_image.height, carla_image.width, 4))
+
+        # CARLA raw format: BGRA. Perception tarafı genelde BGR bekliyor.
+        bgr = arr[:, :, :3].copy()
+
+        msg = Image()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "carla_front_camera"
+        msg.height = carla_image.height
+        msg.width = carla_image.width
+        msg.encoding = "bgr8"
+        msg.is_bigendian = 0
+        msg.step = carla_image.width * 3
+        msg.data = bgr.tobytes()
+
+        self.pub.publish(msg)
+
+        self.frame_count += 1
+        now = time.time()
+        if now - self.last_log_time >= 2.0:
+            fps = self.frame_count / (now - self.last_log_time)
+            self.get_logger().info(f"publishing {self.topic} fps={fps:.1f}")
+            self.frame_count = 0
+            self.last_log_time = now
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="localhost")
+    parser.add_argument("--port", type=int, default=2000)
+    parser.add_argument("--topic", default="/adas/camera/front/image_raw")
+    parser.add_argument("--width", type=int, default=960)
+    parser.add_argument("--height", type=int, default=540)
+    parser.add_argument("--fov", type=float, default=32.0)
+    parser.add_argument("--state", choices=["red", "yellow", "green"], default="green")
+    parser.add_argument("--index", type=int, default=0)
+    parser.add_argument("--side", choices=["front", "back", "left", "right"], default="back")
+    parser.add_argument("--distance", type=float, default=10.0)
+    parser.add_argument("--camera-z", type=float, default=2.0)
+    parser.add_argument("--target-z", type=float, default=2.6)
+    parser.add_argument("--use-spectator", action="store_true")
+    args = parser.parse_args()
+
+    client = carla.Client(args.host, args.port)
+    client.set_timeout(20.0)
+
+    world = client.get_world()
+    blueprint_library = world.get_blueprint_library()
+
+    # Eski test kameralarını temizle.
+    for actor in world.get_actors():
+        try:
+            role_name = actor.attributes.get("role_name", "")
+            if role_name == "adas_tl_only_camera":
+                actor.destroy()
+        except Exception:
+            pass
+
+    tls = list(world.get_actors().filter("*traffic_light*"))
+    if not tls:
+        print("[ERROR] CARLA içinde traffic light actor bulunamadı.")
+        sys.exit(1)
+
+    state_map = {
+        "red": carla.TrafficLightState.Red,
+        "yellow": carla.TrafficLightState.Yellow,
+        "green": carla.TrafficLightState.Green,
+    }
+
+    for tl in tls:
+        try:
+            tl.set_state(state_map[args.state])
+            tl.freeze(True)
+            tl.set_green_time(9999.0)
+            tl.set_yellow_time(9999.0)
+            tl.set_red_time(9999.0)
+        except Exception:
+            pass
+
+    spectator = world.get_spectator()
+
+    # En yakındaki trafik ışığını seç.
+    spec_loc = spectator.get_transform().location
+    tls.sort(key=lambda t: t.get_transform().location.distance(spec_loc))
+
+    selected_tl = tls[args.index % len(tls)]
+    tl_tf = selected_tl.get_transform()
+    tl_loc = tl_tf.location
+
+    if args.use_spectator:
+        camera_tf = spectator.get_transform()
+        print("[CAMERA] spectator transform kullanılacak.")
+    else:
+        offset = get_offset_from_yaw(tl_tf.rotation.yaw, args.side, args.distance)
+
+        cam_loc = carla.Location(
+            x=tl_loc.x + offset.x,
+            y=tl_loc.y + offset.y,
+            z=tl_loc.z + args.camera_z
+        )
+
+        target_loc = carla.Location(
+            x=tl_loc.x,
+            y=tl_loc.y,
+            z=tl_loc.z + args.target_z
+        )
+
+        camera_tf = look_at(cam_loc, target_loc)
+
+    print(f"[TL] total={len(tls)} selected_id={selected_tl.id}")
+    print(f"[TL] state={args.state} side={args.side} distance={args.distance}")
+    print(f"[TL] loc=({tl_loc.x:.2f}, {tl_loc.y:.2f}, {tl_loc.z:.2f})")
+    print(f"[CAMERA] loc=({camera_tf.location.x:.2f}, {camera_tf.location.y:.2f}, {camera_tf.location.z:.2f})")
+    print(f"[CAMERA] rot=(pitch={camera_tf.rotation.pitch:.2f}, yaw={camera_tf.rotation.yaw:.2f})")
+
+    cam_bp = blueprint_library.find("sensor.camera.rgb")
+    cam_bp.set_attribute("image_size_x", str(args.width))
+    cam_bp.set_attribute("image_size_y", str(args.height))
+    cam_bp.set_attribute("fov", str(args.fov))
+    if cam_bp.has_attribute("role_name"):
+        cam_bp.set_attribute("role_name", "adas_tl_only_camera")
+
+    camera = world.spawn_actor(cam_bp, camera_tf)
+    spectator.set_transform(camera_tf)
+
+    rclpy.init()
+    node = CarlaImagePublisher(args.topic)
+
+    camera.listen(lambda image: node.publish_carla_image(image))
+
+    print(f"[ROS] Publishing: {args.topic}")
+    print("[ROS] Bu terminal açık kalacak. Kapatmak için CTRL+C.")
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        try:
+            camera.stop()
+            camera.destroy()
+        except Exception:
+            pass
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
