@@ -268,9 +268,9 @@ class PerceptionNode(Node):
         label = self.normalize_text(original_label)
 
         class_map = {
-            "motorcycle": "__drop__",
-            "motorbike": "__drop__",
-            "bike": "__drop__",
+            "motorcycle": "motorcycle",
+            "motorbike": "motorcycle",
+            "bike": "motorcycle",
 
             "pedestrian": "person",
             "person": "person",
@@ -306,8 +306,8 @@ class PerceptionNode(Node):
         if label == "vehicle":
             return self.vehicle_conf_threshold
 
-        if label == "__drop__":
-            return 999.0
+        if label == "motorcycle":
+            return self.motorcycle_conf_threshold
 
         if label == "traffic_light":
             return self.traffic_light_conf_threshold
@@ -1323,34 +1323,10 @@ class PerceptionNode(Node):
             bh = max(1.0, y2 - y1)
             area = bw * bh
             cx = (x1 + x2) / 2.0
-            cy = (y1 + y2) / 2.0
-
-            # CARLA TEST FIX:
-            # Sol üstteki/arkası görünen ışıklar active seçilmesin.
-            # Doğru ışık genelde kamera merkez-sağ bandında ve çok tepede değil.
-            roi_enabled = self.tl_env_bool_safe("TL_ACTIVE_ROI_ENABLED", True)
-            roi_x_min = self.tl_env_float_safe("TL_ACTIVE_ROI_X_MIN", 0.38)
-            roi_x_max = self.tl_env_float_safe("TL_ACTIVE_ROI_X_MAX", 0.82)
-            roi_y_min = self.tl_env_float_safe("TL_ACTIVE_ROI_Y_MIN", 0.12)
-            roi_y_max = self.tl_env_float_safe("TL_ACTIVE_ROI_Y_MAX", 0.55)
-
-            cx_ratio = cx / max(1.0, float(frame_w))
-            cy_ratio = cy / max(1.0, float(frame_h))
-
-            if roi_enabled:
-                if not (roi_x_min <= cx_ratio <= roi_x_max and roi_y_min <= cy_ratio <= roi_y_max):
-                    det["active_reject_reason"] = (
-                        f"active_roi_reject:cx={cx_ratio:.3f},cy={cy_ratio:.3f},"
-                        f"roi_x={roi_x_min:.2f}-{roi_x_max:.2f},"
-                        f"roi_y={roi_y_min:.2f}-{roi_y_max:.2f}"
-                    )
-                    continue
 
             center_score = 1.0 - min(1.0, abs(cx - frame_w * 0.5) / max(1.0, frame_w * 0.5))
 
-            # Aktif ışık seçiminde renge öncelik verme.
-            # Red priority açık kalırsa arkadaki/yanlış red, doğru green'i ezer.
-            if red_priority and not self.tl_env_bool_safe("TL_DISABLE_RED_PRIORITY_FOR_ACTIVE", True):
+            if red_priority:
                 state_priority = {
                     "red": 3,
                     "yellow": 2,
@@ -1661,16 +1637,13 @@ class PerceptionNode(Node):
         if det.get("label") != "traffic_light":
             return False
 
-        if not env_bool("TL_REJECT_CARLA_YELLOW_BODY", True):
-            return False
+        try:
+            enabled = env_bool("TL_REJECT_CARLA_YELLOW_BODY", True)
+        except Exception:
+            import os
+            enabled = str(os.environ.get("TL_REJECT_CARLA_YELLOW_BODY", "1")).lower().strip() in ("1", "true", "yes", "on")
 
-        state = str(det.get("traffic_light_state", "unknown")).lower().strip()
-
-        # KRİTİK FIX:
-        # Classifier/position sistemi GREEN veya RED'i net bulduysa,
-        # HSV reason içinde "yellow_touches_border..." geçse bile silme.
-        # Çünkü CARLA trafik ışığının sarı kasası HSV'yi kirletiyor.
-        if state in ["green", "red"]:
+        if not enabled:
             return False
 
         fields = [
@@ -1692,10 +1665,10 @@ class PerceptionNode(Node):
             "no_dark_lens_panel",
         ]
 
-        # Bu filtre sadece YELLOW/UNKNOWN için çalışsın.
-        if state in ["yellow", "unknown"]:
-            if any(t in text for t in bad_tokens):
-                return True
+        if any(t in text for t in bad_tokens):
+            return True
+
+        state = str(det.get("traffic_light_state", "unknown")).lower().strip()
 
         scores = (
             det.get("traffic_light_color_scores")
@@ -1712,7 +1685,7 @@ class PerceptionNode(Node):
             except Exception:
                 red, yellow, green = 0.0, 0.0, 0.0
 
-            # CARLA'nın sarı kasası: sadece state zaten yellow ise at.
+            # CARLA'nın sarı kasası: sarı piksel çok yüksek, kırmızı/yeşil neredeyse yok.
             if state == "yellow" and yellow >= 800 and red <= 40 and green <= 40:
                 return True
 
@@ -2197,7 +2170,7 @@ class PerceptionNode(Node):
 
         vehicles = len([d for d in detections if d.get("label") == "vehicle"])
         persons = len([d for d in detections if d.get("label") == "person"])
-        motorcycles = 0
+        motorcycles = len([d for d in detections if d.get("label") == "motorcycle"])
         traffic_lights = len([d for d in detections if d.get("label") == "traffic_light"])
         traffic_signs = len([d for d in detections if d.get("label") == "traffic_sign"])
 
@@ -2244,7 +2217,7 @@ class PerceptionNode(Node):
         self.draw_text(canvas, "DETECTIONS", px, 355, (200, 200, 200), 0.60, 2)
         self.draw_text(canvas, f"Vehicles      : {vehicles}", px, 392)
         self.draw_text(canvas, f"Persons       : {persons}", px, 419)
-        self.draw_text(canvas, "Motorcycles   : disabled", px, 446)
+        self.draw_text(canvas, f"Motorcycles   : {motorcycles}", px, 446)
         self.draw_text(canvas, f"TrafficLight  : {traffic_lights}", px, 473)
         self.draw_text(canvas, f"TrafficSign   : {traffic_signs}", px, 500)
         self.draw_text(canvas, f"Others        : {others}", px, 527)
@@ -2329,11 +2302,6 @@ class PerceptionNode(Node):
 
                     original_label = self.get_yolo_name(cls_id)
                     label = self.normalize_label(original_label)
-
-                    # Motorcycle sınıfı proje kapsamından çıkarıldı.
-                    # YOLO class_id=0 üretse bile perception bunu hiç kullanmayacak.
-                    if label == "__drop__":
-                        continue
 
                     class_threshold = self.get_class_threshold(label)
 

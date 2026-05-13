@@ -268,9 +268,9 @@ class PerceptionNode(Node):
         label = self.normalize_text(original_label)
 
         class_map = {
-            "motorcycle": "__drop__",
-            "motorbike": "__drop__",
-            "bike": "__drop__",
+            "motorcycle": "motorcycle",
+            "motorbike": "motorcycle",
+            "bike": "motorcycle",
 
             "pedestrian": "person",
             "person": "person",
@@ -306,8 +306,8 @@ class PerceptionNode(Node):
         if label == "vehicle":
             return self.vehicle_conf_threshold
 
-        if label == "__drop__":
-            return 999.0
+        if label == "motorcycle":
+            return self.motorcycle_conf_threshold
 
         if label == "traffic_light":
             return self.traffic_light_conf_threshold
@@ -2197,7 +2197,7 @@ class PerceptionNode(Node):
 
         vehicles = len([d for d in detections if d.get("label") == "vehicle"])
         persons = len([d for d in detections if d.get("label") == "person"])
-        motorcycles = 0
+        motorcycles = len([d for d in detections if d.get("label") == "motorcycle"])
         traffic_lights = len([d for d in detections if d.get("label") == "traffic_light"])
         traffic_signs = len([d for d in detections if d.get("label") == "traffic_sign"])
 
@@ -2244,7 +2244,7 @@ class PerceptionNode(Node):
         self.draw_text(canvas, "DETECTIONS", px, 355, (200, 200, 200), 0.60, 2)
         self.draw_text(canvas, f"Vehicles      : {vehicles}", px, 392)
         self.draw_text(canvas, f"Persons       : {persons}", px, 419)
-        self.draw_text(canvas, "Motorcycles   : disabled", px, 446)
+        self.draw_text(canvas, f"Motorcycles   : {motorcycles}", px, 446)
         self.draw_text(canvas, f"TrafficLight  : {traffic_lights}", px, 473)
         self.draw_text(canvas, f"TrafficSign   : {traffic_signs}", px, 500)
         self.draw_text(canvas, f"Others        : {others}", px, 527)
@@ -2329,11 +2329,6 @@ class PerceptionNode(Node):
 
                     original_label = self.get_yolo_name(cls_id)
                     label = self.normalize_label(original_label)
-
-                    # Motorcycle sınıfı proje kapsamından çıkarıldı.
-                    # YOLO class_id=0 üretse bile perception bunu hiç kullanmayacak.
-                    if label == "__drop__":
-                        continue
 
                     class_threshold = self.get_class_threshold(label)
 
