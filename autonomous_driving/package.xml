@@ -1,10 +1,11 @@
+cat > package.xml <<'XML'
 <?xml version="1.0"?>
 <package format="3">
   <name>autonomous_driving</name>
-  <version>0.0.1</version>
-  <description>Autonomous driving Gazebo + ROS2 integration package</description>
+  <version>0.1.0</version>
+  <description>Autonomous driving perception, decision and CARLA ROS2 integration package</description>
 
-  <maintainer email="you@example.com">you</maintainer>
+  <maintainer email="ilker.akbal4822@gop.edu.tr">Ilker Akbal</maintainer>
   <license>MIT</license>
 
   <buildtool_depend>ament_python</buildtool_depend>
@@ -17,10 +18,10 @@
   <depend>launch</depend>
   <depend>launch_ros</depend>
 
-  <exec_depend>ros_gz_bridge</exec_depend>
-  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
   </export>
 </package>
+XML

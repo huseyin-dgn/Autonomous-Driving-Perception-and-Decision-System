@@ -4,7 +4,7 @@ package_name = "autonomous_driving"
 
 setup(
     name=package_name,
-    version="0.0.1",
+    version="0.1.0",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     data_files=[
@@ -13,38 +13,16 @@ setup(
         (
             "share/autonomous_driving/launch",
             [
-                "launch/gazebo_sim.launch.py",
                 "launch/perception.launch.py",
-                "launch/full_system.launch.py",
                 "launch/carla_full_system.launch.py",
-            ],
-        ),
-        (
-            "share/autonomous_driving/gazebo/worlds",
-            [
-                "gazebo/worlds/adas_test_world.sdf",
-                "gazebo/worlds/adas_test_world_final.sdf",
-            ],
-        ),
-        (
-            "share/autonomous_driving/gazebo/models/vehicle_model",
-            [
-                "gazebo/models/vehicle_model/model.sdf",
-                "gazebo/models/vehicle_model/model.config",
-            ],
-        ),
-        (
-            "share/autonomous_driving/gazebo/config",
-            [
-                "gazebo/config/bridge.yaml",
             ],
         ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="you",
-    maintainer_email="you@example.com",
-    description="Autonomous driving Gazebo + CARLA + ROS2 integration package",
+    maintainer="ilker",
+    maintainer_email="ilker.akbal4822@gop.edu.tr",
+    description="Autonomous driving perception, decision and CARLA ROS2 integration package",
     license="MIT",
     tests_require=["pytest"],
     entry_points={
