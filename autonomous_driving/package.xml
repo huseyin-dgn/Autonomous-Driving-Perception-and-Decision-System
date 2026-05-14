@@ -1,9 +1,8 @@
-cat > package.xml <<'XML'
 <?xml version="1.0"?>
 <package format="3">
   <name>autonomous_driving</name>
   <version>0.1.0</version>
-  <description>Autonomous driving perception, decision and CARLA ROS2 integration package</description>
+  <description>TEKNOFEST Robotaksi CARLA simulation, perception, decision and control package</description>
 
   <maintainer email="ilker.akbal4822@gop.edu.tr">Ilker Akbal</maintainer>
   <license>MIT</license>
@@ -14,6 +13,7 @@ cat > package.xml <<'XML'
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>cv_bridge</depend>
   <depend>launch</depend>
   <depend>launch_ros</depend>
@@ -24,4 +24,3 @@ cat > package.xml <<'XML'
     <build_type>ament_python</build_type>
   </export>
 </package>
-XML

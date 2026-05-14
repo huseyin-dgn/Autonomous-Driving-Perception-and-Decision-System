@@ -1,0 +1,69 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "start",
+        "description": "Araç başlangıç konumu",
+        "nokta_id": 0,
+        "yaw": 0.15919755399227142
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0005807131438225307,
+          -0.00022012680703653587
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "gorev_1",
+        "description": "1. yolcu alma/bindirme noktası",
+        "nokta_id": 1,
+        "yaw": -90.1612319946289
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.000407043493163251,
+          1.7208478297447982e-05
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "gorev_2",
+        "description": "2. yolcu indirme/bindirme noktası",
+        "nokta_id": 2,
+        "yaw": 270.43231201171875
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0004059605555561059,
+          0.0003314499111013447
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "park_giris",
+        "description": "Araç otopark giriş bölgesi noktası",
+        "nokta_id": 3,
+        "yaw": -179.40325927734375
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0005544609364695223,
+          0.0005851405019825506
+        ]
+      }
+    }
+  ]
+}

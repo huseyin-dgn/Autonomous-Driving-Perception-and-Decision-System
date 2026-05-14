@@ -13,8 +13,7 @@ setup(
         (
             "share/autonomous_driving/launch",
             [
-                "launch/perception.launch.py",
-                "launch/carla_full_system.launch.py",
+                "launch/teknofest_carla_full.launch.py",
             ],
         ),
     ],
@@ -22,7 +21,7 @@ setup(
     zip_safe=True,
     maintainer="ilker",
     maintainer_email="ilker.akbal4822@gop.edu.tr",
-    description="Autonomous driving perception, decision and CARLA ROS2 integration package",
+    description="TEKNOFEST Robotaksi CARLA simulation, perception, mission, decision and control package",
     license="MIT",
     tests_require=["pytest"],
     entry_points={
@@ -38,6 +37,11 @@ setup(
             "carla_control_adapter_node = ros2_nodes.carla_control_adapter_node:main",
             "carla_scenario_manager_node = ros2_nodes.carla_scenario_manager_node:main",
             "carla_logger_node = ros2_nodes.carla_logger_node:main",
+
+            "teknofest_mission_node = teknofest_sim.teknofest_mission_node:main",
+            "teknofest_route_agent_node = teknofest_sim.teknofest_route_agent_node:main",
+            "teknofest_scenario_node = teknofest_sim.teknofest_scenario_node:main",
+            "teknofest_evaluator_node = teknofest_sim.teknofest_evaluator_node:main",
         ],
     },
 )
