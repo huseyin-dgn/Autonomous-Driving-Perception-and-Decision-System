@@ -1621,6 +1621,32 @@ class PerceptionNode(Node):
                     f"lens_unknown:{lens_reason};old_state={old_state};old_conf={old_conf};old_reason={old_reason}"
                 )
 
+                # --- KEEP_STRONG_CLASSIFIER_RED_ON_LENS_UNKNOWN ---
+                # CARLA'da bazı gerçek kırmızı ışıklar lens panel filtresinden "unknown" dönebiliyor.
+                # Classifier güçlü RED diyorsa güvenlik için bunu silme; gate'e ulaşsın.
+                try:
+                    old_conf_f = float(old_conf)
+                except Exception:
+                    old_conf_f = 0.0
+
+                keep_classifier_red = (
+                    old_state == "red"
+                    and old_conf_f >= float(os.environ.get("TL_KEEP_CLASSIFIER_RED_CONF", "0.55"))
+                )
+
+                if keep_classifier_red:
+                    det["traffic_light_state"] = "red"
+                    det["traffic_light_state_confidence"] = old_conf_f
+                    det["state_confidence"] = old_conf_f
+                    det["traffic_light_state_source"] = "classifier_red_keep_lens_unknown"
+                    det["state_source"] = "classifier_red_keep_lens_unknown"
+                    det["traffic_light_color_reason"] = (
+                        f"classifier_red_kept_lens_unknown:{lens_reason};"
+                        f"old_conf={old_conf};old_reason={old_reason}"
+                    )
+                    kept.append(det)
+                    continue
+
                 if drop_unknown:
                     dropped_reasons.append(det["traffic_light_color_reason"][:220])
                     continue

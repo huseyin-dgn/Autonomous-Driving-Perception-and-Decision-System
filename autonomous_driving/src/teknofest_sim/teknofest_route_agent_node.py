@@ -517,8 +517,53 @@ class TeknofestRouteAgentNode(Node):
 
                 basic_steer = self.clamp(control.steer, -self.max_steer, self.max_steer)
                 control.steer = self.apply_lane_assist_to_steer(basic_steer, target_speed)
-                control.throttle = self.clamp(control.throttle, 0.0, 0.75)
-                control.brake = self.clamp(control.brake, 0.0, 1.0)
+
+                # SMOOTH_LONGITUDINAL_FIX:
+                # BasicAgent steer iyi ama düşük hızda gaz/fren zıplatıyor.
+                # Bu yüzden direksiyon BasicAgent'ten, throttle/brake yumuşak hız kontrolünden geliyor.
+                if not hasattr(self, "last_throttle_cmd"):
+                    self.last_throttle_cmd = 0.0
+                if not hasattr(self, "last_brake_cmd"):
+                    self.last_brake_cmd = 0.0
+
+                speed_error = float(target_speed) - float(current_speed)
+                overspeed = float(current_speed) - float(target_speed)
+
+                desired_throttle = 0.0
+                desired_brake = 0.0
+
+                if speed_error > 0.20:
+                    desired_throttle = 0.055 + 0.14 * speed_error
+                    desired_throttle = self.clamp(desired_throttle, 0.055, 0.32)
+                    desired_brake = 0.0
+                elif overspeed <= 0.55:
+                    desired_throttle = 0.018 if current_speed < target_speed else 0.0
+                    desired_brake = 0.0
+                else:
+                    desired_throttle = 0.0
+                    desired_brake = self.clamp(0.10 * (overspeed - 0.55), 0.0, 0.08)
+
+                def _slew(cur, dst, step):
+                    cur = float(cur)
+                    dst = float(dst)
+                    step = abs(float(step))
+                    if dst > cur:
+                        return min(dst, cur + step)
+                    if dst < cur:
+                        return max(dst, cur - step)
+                    return cur
+
+                throttle_cmd = _slew(self.last_throttle_cmd, desired_throttle, 0.030)
+                brake_cmd = _slew(self.last_brake_cmd, desired_brake, 0.035)
+
+                if brake_cmd > 0.001:
+                    throttle_cmd = 0.0
+
+                self.last_throttle_cmd = throttle_cmd
+                self.last_brake_cmd = brake_cmd
+
+                control.throttle = self.clamp(throttle_cmd, 0.0, 0.32)
+                control.brake = self.clamp(brake_cmd, 0.0, 0.08)
                 control.hand_brake = False
                 control.manual_gear_shift = False
 
