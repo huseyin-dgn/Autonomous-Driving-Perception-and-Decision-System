@@ -516,6 +516,13 @@ class TeknofestRouteAgentNode(Node):
         target_name = str(target.get("name", "")).lower()
         turn_dir, turn_angle = self.get_turn_direction_to_target(target)
 
+        # ROUTE_NAME_LANE_INTENT:
+        # via_right_* sağ şerit/yanaşma, via_left_* sol şerit hazırlığı anlamına gelir.
+        if "via_right" in target_name or "right_" in target_name or "sag" in target_name:
+            turn_dir = "right"
+        elif "via_left" in target_name or "left_" in target_name or "sol" in target_name:
+            turn_dir = "left"
+
         selected_wp = wp
         lateral_shift_m = 0.0
         approach_reason = f"straight_or_center:turn={turn_dir},angle={turn_angle:.1f}"

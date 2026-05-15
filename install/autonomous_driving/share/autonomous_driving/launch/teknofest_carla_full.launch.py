@@ -262,7 +262,7 @@ def generate_launch_description():
                         "round_name": round_name,
                         "point_pass_tolerance_m": 3.0,
                         "passenger_stop_min_s": 5.0,
-                        "passenger_stop_max_s": 7.0,
+                        "passenger_stop_max_s": 20.0,
                         "park_time_limit_s": 180.0,
                     }],
                 ),

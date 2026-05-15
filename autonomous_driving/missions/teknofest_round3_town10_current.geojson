@@ -5,7 +5,7 @@
       "type": "Feature",
       "properties": {
         "name": "start",
-        "description": "Araç başlangıç konumu",
+        "description": "Başlangıç noktası",
         "nokta_id": 0,
         "yaw": 0.15919755399227142
       },
@@ -20,9 +20,24 @@
     {
       "type": "Feature",
       "properties": {
+        "name": "via_right_after_turn_1",
+        "description": "Dönüş sonrası sağ şeride/yanaşmaya hazırlık noktası",
+        "nokta_id": 10
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0004451783760366384,
+          -1.3984927802559695e-05
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
         "name": "gorev_1",
-        "description": "1. yolcu alma/bindirme noktası",
-        "nokta_id": 1,
+        "description": "1. yolcu alma/bindirme noktası - sağ şeritte bekleme",
+        "nokta_id": 20,
         "yaw": -90.1612319946289
       },
       "geometry": {
@@ -36,9 +51,39 @@
     {
       "type": "Feature",
       "properties": {
+        "name": "via_left_prepare_1",
+        "description": "Kavşaktan sola dönmeden önce sol şerit hazırlık noktası",
+        "nokta_id": 30
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0004066338000716251,
+          0.0001360911759459241
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "via_after_left_turn_1",
+        "description": "Sola dönüş sonrası şeride oturma noktası",
+        "nokta_id": 40
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0004063367804324255,
+          0.00022227885322037436
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
         "name": "gorev_2",
         "description": "2. yolcu indirme/bindirme noktası",
-        "nokta_id": 2,
+        "nokta_id": 50,
         "yaw": 270.43231201171875
       },
       "geometry": {
@@ -52,9 +97,24 @@
     {
       "type": "Feature",
       "properties": {
+        "name": "via_right_park_approach",
+        "description": "Park öncesi sağa yanaşma hazırlık noktası",
+        "nokta_id": 60
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -0.0005128808298137657,
+          0.000514107136535813
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
         "name": "park_giris",
         "description": "Araç otopark giriş bölgesi noktası",
-        "nokta_id": 3,
+        "nokta_id": 70,
         "yaw": -179.40325927734375
       },
       "geometry": {

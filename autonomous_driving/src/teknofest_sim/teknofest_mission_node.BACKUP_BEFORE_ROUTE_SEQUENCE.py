@@ -1,4 +1,6 @@
 import json
+import math
+import os
 import time
 from dataclasses import asdict
 
@@ -47,17 +49,10 @@ class TeknofestMissionNode(Node):
         self.current_lon = None
 
         self.stage = "GO_TO_TASK"
-        self.route_index = 0
-        self.completed_task_count = 0
+        self.task_index = 0
         self.stop_started_at = None
         self.park_entry_reached_at = None
         self.completed = False
-
-        # ROUTE_SEQUENCE_FIX:
-        # GeoJSON içindeki via_* noktaları duraksız geçiş hedefidir.
-        # gorev_* / passenger_* noktalarında yolcu durağı yapılır.
-        # park_giris final park hedefidir.
-        self.route_points = self.build_route_points()
 
         self.pub = self.create_publisher(String, self.mission_topic, 10)
         self.event_pub = self.create_publisher(String, self.event_topic, 10)
@@ -65,25 +60,7 @@ class TeknofestMissionNode(Node):
         self.create_subscription(NavSatFix, self.gnss_topic, self.gnss_cb, 10)
         self.timer = self.create_timer(0.2, self.tick)
 
-        self.get_logger().info(
-            f"TEKNOFEST mission loaded: {json.dumps(mission_to_dict(self.mission), ensure_ascii=False)}"
-        )
-
-        self.get_logger().info(
-            "ROUTE_SEQUENCE_FIX active route="
-            + json.dumps(
-                [
-                    {
-                        "index": i,
-                        "name": p.name,
-                        "kind": self.point_kind(p),
-                        "nokta_id": p.nokta_id,
-                    }
-                    for i, p in enumerate(self.route_points)
-                ],
-                ensure_ascii=False,
-            )
-        )
+        self.get_logger().info(f"TEKNOFEST mission loaded: {json.dumps(mission_to_dict(self.mission), ensure_ascii=False)}")
 
     def publish_event(self, event_type: str, payload: dict):
         msg = String()
@@ -100,54 +77,16 @@ class TeknofestMissionNode(Node):
         self.current_lat = float(msg.latitude)
         self.current_lon = float(msg.longitude)
 
-    def point_kind(self, point):
-        name = str(point.name or "").lower()
+    def target_point(self):
+        if self.stage in {"GO_TO_TASK", "PASSENGER_STOP"}:
+            if self.task_index < len(self.mission.task_points):
+                return self.mission.task_points[self.task_index]
+            return self.mission.park_entry
 
-        if name == "park_giris" or name.startswith("park"):
-            return "park"
-
-        if name.startswith("gorev_") or name.startswith("passenger_"):
-            return "task"
-
-        return "via"
-
-    def build_route_points(self):
-        points = [
-            p for name, p in self.mission.raw_points.items()
-            if str(name).lower() != "start"
-        ]
-
-        points = sorted(points, key=lambda p: int(p.nokta_id))
-
-        # Park her zaman en sonda olsun.
-        non_park = [p for p in points if self.point_kind(p) != "park"]
-        park = [p for p in points if self.point_kind(p) == "park"]
-
-        route = non_park + park
-
-        if not route:
-            route = list(self.mission.task_points) + [self.mission.park_entry]
-
-        return route
-
-    def current_route_point(self):
-        if self.route_index < len(self.route_points):
-            return self.route_points[self.route_index]
+        if self.stage in {"GO_TO_PARK", "PARKING"}:
+            return self.mission.park_entry
 
         return self.mission.park_entry
-
-    def current_route_kind(self):
-        return self.point_kind(self.current_route_point())
-
-    def advance_route_index(self):
-        if self.route_index < len(self.route_points) - 1:
-            self.route_index += 1
-            return True
-
-        return False
-
-    def target_point(self):
-        return self.current_route_point()
 
     def distance_to_target(self):
         if self.current_lat is None or self.current_lon is None:
@@ -164,110 +103,57 @@ class TeknofestMissionNode(Node):
     def tick(self):
         dist = self.distance_to_target()
         target = self.target_point()
-        kind = self.current_route_kind()
         now = time.time()
 
         if dist is not None and not self.completed:
             if self.stage == "GO_TO_TASK":
-                if kind == "via" and dist <= self.point_pass_tolerance_m:
-                    self.publish_event(
-                        "route_via_reached",
-                        {
-                            "target": asdict(target),
-                            "route_index": self.route_index,
-                            "distance_m": round(dist, 3),
-                        },
-                    )
-
-                    self.advance_route_index()
-                    target = self.target_point()
-                    kind = self.current_route_kind()
-
-                    if kind == "park":
-                        self.stage = "GO_TO_PARK"
-                    else:
-                        self.stage = "GO_TO_TASK"
-
-                elif kind == "task" and dist <= self.point_pass_tolerance_m:
+                if dist <= self.point_pass_tolerance_m:
                     self.stage = "PASSENGER_STOP"
                     self.stop_started_at = now
                     self.publish_event(
                         "passenger_stop_started",
                         {
                             "target": asdict(target),
-                            "task_index": self.completed_task_count,
-                            "route_index": self.route_index,
-                            "distance_m": round(dist, 3),
-                        },
-                    )
-
-                elif kind == "park" and dist <= self.point_pass_tolerance_m:
-                    self.stage = "PARKING"
-                    self.park_entry_reached_at = now
-                    self.publish_event(
-                        "park_entry_reached",
-                        {
-                            "target": asdict(target),
-                            "route_index": self.route_index,
+                            "task_index": self.task_index,
                             "distance_m": round(dist, 3),
                         },
                     )
 
             elif self.stage == "PASSENGER_STOP":
                 elapsed = now - self.stop_started_at
-
                 if elapsed >= self.passenger_stop_min_s:
                     self.publish_event(
                         "passenger_stop_completed",
                         {
                             "target": asdict(target),
-                            "task_index": self.completed_task_count,
-                            "route_index": self.route_index,
+                            "task_index": self.task_index,
                             "stop_elapsed_s": round(elapsed, 3),
                             "valid_stop_window": elapsed <= self.passenger_stop_max_s,
                         },
                     )
 
-                    self.completed_task_count += 1
+                    self.task_index += 1
                     self.stop_started_at = None
 
-                    self.advance_route_index()
-                    target = self.target_point()
-                    kind = self.current_route_kind()
-
-                    if kind == "park":
+                    if self.task_index >= len(self.mission.task_points):
                         self.stage = "GO_TO_PARK"
                     else:
                         self.stage = "GO_TO_TASK"
 
             elif self.stage == "GO_TO_PARK":
-                if kind == "via" and dist <= self.point_pass_tolerance_m:
-                    self.publish_event(
-                        "route_via_reached",
-                        {
-                            "target": asdict(target),
-                            "route_index": self.route_index,
-                            "distance_m": round(dist, 3),
-                        },
-                    )
-
-                    self.advance_route_index()
-
-                elif kind == "park" and dist <= self.point_pass_tolerance_m:
+                if dist <= self.point_pass_tolerance_m:
                     self.stage = "PARKING"
                     self.park_entry_reached_at = now
                     self.publish_event(
                         "park_entry_reached",
                         {
                             "target": asdict(target),
-                            "route_index": self.route_index,
                             "distance_m": round(dist, 3),
                         },
                     )
 
             elif self.stage == "PARKING":
                 elapsed = now - self.park_entry_reached_at
-
                 if elapsed >= 8.0:
                     self.completed = True
                     self.stage = "COMPLETED"
@@ -289,16 +175,11 @@ class TeknofestMissionNode(Node):
                         },
                     )
 
-        target = self.target_point()
-        kind = self.current_route_kind()
-
         out = {
             "stamp": now,
             "mission": mission_to_dict(self.mission),
             "stage": self.stage,
-            "task_index": self.completed_task_count,
-            "route_index": self.route_index,
-            "route_kind": kind,
+            "task_index": self.task_index,
             "target": asdict(target),
             "distance_to_target_m": round(dist, 3) if dist is not None else None,
             "must_stop": self.stage in {"PASSENGER_STOP", "PARKING"},
