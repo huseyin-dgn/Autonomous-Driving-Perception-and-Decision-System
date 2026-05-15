@@ -18,7 +18,7 @@ from PIL import Image as PILImage
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import String
 from cv_bridge import CvBridge
 from ultralytics import YOLO
@@ -49,6 +49,17 @@ class PerceptionNode(Node):
 
         self.declare_parameter("image_topic", os.environ.get("IMAGE_TOPIC", "/adas/camera/front/image_raw"))
         self.declare_parameter("detections_topic", "/adas/perception/detections_json")
+        self.declare_parameter("depth_topic", "/zed/zed_node/depth/depth_registered")
+        self.declare_parameter("lidar_topic", "/adas/lidar/points")
+        self.declare_parameter("depth_lidar_fusion_enabled", True)
+        self.declare_parameter("depth_roi_half_size", 4)
+        self.declare_parameter("depth_min_m", 0.2)
+        self.declare_parameter("depth_max_m", 80.0)
+        self.declare_parameter("lidar_front_min_x", 0.5)
+        self.declare_parameter("lidar_front_max_x", 40.0)
+        self.declare_parameter("lidar_front_abs_y", 2.0)
+        self.declare_parameter("lidar_min_z", -2.0)
+        self.declare_parameter("lidar_max_z", 3.0)
         self.declare_parameter("annotated_topic", "/adas/perception/annotated_image")
 
         self.declare_parameter(
@@ -131,6 +142,12 @@ class PerceptionNode(Node):
         )
 
         self.bridge = CvBridge()
+
+        # Inline ZED-depth + LiDAR fusion state
+        self.depth_topic = self.get_parameter("depth_topic").value
+        self.lidar_topic = self.get_parameter("lidar_topic").value
+        self.latest_depth = None
+        self.latest_lidar_front_m = None
         self.model = YOLO(self.model_path)
 
         self.tl_state_model = None
@@ -145,6 +162,20 @@ class PerceptionNode(Node):
         self.window_name = "ADAS PERCEPTION DEBUG"
 
         self.sub = self.create_subscription(Image, self.image_topic, self.image_callback, qos_profile_sensor_data, )
+
+        self.depth_sub = self.create_subscription(
+            Image,
+            self.depth_topic,
+            self.depth_callback,
+            qos_profile_sensor_data,
+        )
+        self.lidar_sub = self.create_subscription(
+            PointCloud2,
+            self.lidar_topic,
+            self.lidar_callback,
+            qos_profile_sensor_data,
+        )
+        self.get_logger().info(f"Depth/LiDAR fusion subscribers: {self.depth_topic}, {self.lidar_topic}")
 
         self.det_pub = self.create_publisher(
             String,
@@ -2368,6 +2399,229 @@ class PerceptionNode(Node):
 
         return canvas
 
+
+    # ==========================================================
+    # Inline depth + LiDAR fusion helpers
+    # ==========================================================
+
+    def depth_callback(self, msg):
+        if not bool(self.get_parameter("depth_lidar_fusion_enabled").value):
+            return
+
+        if msg.encoding != "32FC1":
+            self.get_logger().warn_once(f"Depth encoding 32FC1 değil: {msg.encoding}")
+            return
+
+        try:
+            depth = np.frombuffer(msg.data, dtype=np.float32).reshape((msg.height, msg.width))
+            self.latest_depth = depth.copy()
+        except Exception as e:
+            self.get_logger().warn(f"Depth parse hata: {e}")
+
+    def lidar_callback(self, msg):
+        if not bool(self.get_parameter("depth_lidar_fusion_enabled").value):
+            return
+
+        try:
+            if len(msg.data) == 0 or msg.point_step < 12:
+                self.latest_lidar_front_m = None
+                return
+
+            cols = max(3, msg.point_step // 4)
+            arr = np.frombuffer(msg.data, dtype=np.float32)
+
+            usable = (arr.size // cols) * cols
+            if usable <= 0:
+                self.latest_lidar_front_m = None
+                return
+
+            arr = arr[:usable].reshape((-1, cols))
+            xyz = arr[:, :3]
+
+            x = xyz[:, 0]
+            y = xyz[:, 1]
+            z = xyz[:, 2]
+
+            valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
+
+            min_x = float(self.get_parameter("lidar_front_min_x").value)
+            max_x = float(self.get_parameter("lidar_front_max_x").value)
+            abs_y = float(self.get_parameter("lidar_front_abs_y").value)
+            min_z = float(self.get_parameter("lidar_min_z").value)
+            max_z = float(self.get_parameter("lidar_max_z").value)
+
+            front_mask = (
+                valid
+                & (x >= min_x)
+                & (x <= max_x)
+                & (np.abs(y) <= abs_y)
+                & (z >= min_z)
+                & (z <= max_z)
+            )
+
+            front_x = x[front_mask]
+
+            if front_x.size == 0:
+                self.latest_lidar_front_m = None
+                return
+
+            self.latest_lidar_front_m = float(np.percentile(front_x, 5.0))
+
+        except Exception as e:
+            self.get_logger().warn(f"LiDAR parse hata: {e}")
+            self.latest_lidar_front_m = None
+
+    def _extract_detections_list_for_fusion(self, payload):
+        if isinstance(payload, list):
+            return payload
+
+        if not isinstance(payload, dict):
+            return None
+
+        for key in ("detections", "objects", "results"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+
+        return None
+
+    def _extract_image_size_for_fusion(self, payload):
+        if not isinstance(payload, dict):
+            return None, None
+
+        pairs = (
+            ("image_width", "image_height"),
+            ("frame_width", "frame_height"),
+            ("width", "height"),
+        )
+
+        for wk, hk in pairs:
+            if wk in payload and hk in payload:
+                try:
+                    return int(payload[wk]), int(payload[hk])
+                except Exception:
+                    pass
+
+        shape = payload.get("frame_shape") or payload.get("image_shape")
+        if isinstance(shape, list) and len(shape) >= 2:
+            try:
+                return int(shape[1]), int(shape[0])
+            except Exception:
+                pass
+
+        return None, None
+
+    def _extract_bbox_for_fusion(self, det):
+        if not isinstance(det, dict):
+            return None
+
+        bbox = det.get("bbox") or det.get("box")
+        if isinstance(bbox, list) and len(bbox) >= 4:
+            try:
+                return [float(v) for v in bbox[:4]]
+            except Exception:
+                return None
+
+        keys = ("x1", "y1", "x2", "y2")
+        if all(k in det for k in keys):
+            try:
+                return [float(det[k]) for k in keys]
+            except Exception:
+                return None
+
+        return None
+
+    def _depth_distance_for_bbox(self, bbox, image_w=None, image_h=None):
+        if self.latest_depth is None:
+            return None
+
+        try:
+            x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
+        except Exception:
+            return None
+
+        depth = self.latest_depth
+        dh, dw = depth.shape
+
+        if image_w and image_h and image_w > 0 and image_h > 0:
+            sx = dw / float(image_w)
+            sy = dh / float(image_h)
+            x1 *= sx
+            x2 *= sx
+            y1 *= sy
+            y2 *= sy
+
+        cx = int(round((x1 + x2) / 2.0))
+        cy = int(round((y1 + y2) / 2.0))
+
+        half = int(self.get_parameter("depth_roi_half_size").value)
+
+        x0 = max(0, cx - half)
+        x3 = min(dw, cx + half + 1)
+        y0 = max(0, cy - half)
+        y3 = min(dh, cy + half + 1)
+
+        if x0 >= x3 or y0 >= y3:
+            return None
+
+        roi = depth[y0:y3, x0:x3]
+
+        min_m = float(self.get_parameter("depth_min_m").value)
+        max_m = float(self.get_parameter("depth_max_m").value)
+
+        valid = roi[np.isfinite(roi)]
+        valid = valid[(valid >= min_m) & (valid <= max_m)]
+
+        if valid.size == 0:
+            return None
+
+        return float(np.median(valid))
+
+    def apply_depth_lidar_fusion_to_payload(self, payload):
+        if not bool(self.get_parameter("depth_lidar_fusion_enabled").value):
+            return payload
+
+        detections = self._extract_detections_list_for_fusion(payload)
+        image_w, image_h = self._extract_image_size_for_fusion(payload)
+
+        if isinstance(payload, dict):
+            payload["fusion_enabled"] = True
+            payload["fusion_sources"] = {
+                "zed_depth": self.latest_depth is not None,
+                "lidar": self.latest_lidar_front_m is not None,
+            }
+            payload["front_lidar_obstacle_m"] = (
+                round(float(self.latest_lidar_front_m), 3)
+                if self.latest_lidar_front_m is not None
+                else None
+            )
+
+        if detections is None:
+            return payload
+
+        for det in detections:
+            if not isinstance(det, dict):
+                continue
+
+            bbox = self._extract_bbox_for_fusion(det)
+            depth_m = None
+
+            if bbox is not None:
+                depth_m = self._depth_distance_for_bbox(bbox, image_w, image_h)
+
+            if depth_m is not None:
+                det["distance_m"] = round(float(depth_m), 3)
+                det["distance_est"] = round(float(depth_m), 3)
+                det["distance_source"] = "zed_depth"
+            else:
+                det["distance_source"] = det.get("distance_source", "none")
+
+            if self.latest_lidar_front_m is not None:
+                det["front_lidar_obstacle_m"] = round(float(self.latest_lidar_front_m), 3)
+
+        return payload
+
+
     def image_callback(self, msg):
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
@@ -2721,6 +2975,7 @@ class PerceptionNode(Node):
         }
 
         msg_out = String()
+        payload = self.apply_depth_lidar_fusion_to_payload(payload)
         msg_out.data = json.dumps(payload, ensure_ascii=False)
         self.det_pub.publish(msg_out)
 

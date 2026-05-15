@@ -53,10 +53,6 @@ class TeknofestMissionNode(Node):
         self.park_entry_reached_at = None
         self.completed = False
 
-        # ROUTE_SEQUENCE_FIX:
-        # GeoJSON içindeki via_* noktaları duraksız geçiş hedefidir.
-        # gorev_* / passenger_* noktalarında yolcu durağı yapılır.
-        # park_giris final park hedefidir.
         self.route_points = self.build_route_points()
 
         self.pub = self.create_publisher(String, self.mission_topic, 10)
