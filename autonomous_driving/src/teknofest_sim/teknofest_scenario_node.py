@@ -312,11 +312,24 @@ class TeknofestScenarioNode(Node):
         self.get_logger().info(f"Tabela/işaret marker spawn edildi: {len(selected)}")
 
     def spawn_all(self):
-        self.spawn_static_obstacles()
-        self.spawn_npc_vehicles()
-        self.spawn_walkers()
-        self.spawn_dynamic_crossing_obstacle()
-        self.spawn_sign_markers()
+        # PURE MISSION TEST MODE:
+        # İlk hedef testinde koni/tabela/yaya/NPC spawn etmiyoruz.
+        # Çünkü route testinde trafficcone çarpışması collision_halt'a düşürüyor.
+        if self.static_obstacle_count > 0:
+            self.spawn_static_obstacles()
+
+        if self.npc_vehicle_count > 0:
+            self.spawn_npc_vehicles()
+
+        if self.walker_count > 0:
+            self.spawn_walkers()
+
+        if self.dynamic_crossing_enabled:
+            self.spawn_dynamic_crossing_obstacle()
+
+        # Mission-only testte marker/cone spawn kapalı.
+        # İleride tabela/engel testi yapılırken tekrar açılabilir.
+        # self.spawn_sign_markers()
 
     def publish_status(self):
         payload = {

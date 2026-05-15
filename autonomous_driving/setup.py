@@ -33,6 +33,7 @@ setup(
             "control_node = ros2_nodes.control_node:main",
 
             "carla_world_manager_node = ros2_nodes.carla_world_manager_node:main",
+            "carla_spectator_follow_node = teknofest_sim.carla_spectator_follow_node:main",
             "carla_sensor_bridge_node = ros2_nodes.carla_sensor_bridge_node:main",
             "carla_control_adapter_node = ros2_nodes.carla_control_adapter_node:main",
             "carla_scenario_manager_node = ros2_nodes.carla_scenario_manager_node:main",
@@ -40,6 +41,8 @@ setup(
 
             "teknofest_mission_node = teknofest_sim.teknofest_mission_node:main",
             "teknofest_route_agent_node = teknofest_sim.teknofest_route_agent_node:main",
+            "lane_assist_node = teknofest_sim.lane_assist_node:main",
+            "traffic_light_decision_gate_node = teknofest_sim.traffic_light_decision_gate_node:main",
             "teknofest_scenario_node = teknofest_sim.teknofest_scenario_node:main",
             "teknofest_evaluator_node = teknofest_sim.teknofest_evaluator_node:main",
         ],
