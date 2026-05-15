@@ -1337,7 +1337,16 @@ class PerceptionNode(Node):
             cx_ratio = cx / max(1.0, float(frame_w))
             cy_ratio = cy / max(1.0, float(frame_h))
 
-            if roi_enabled:
+            # ACTIVE_ROI_STRONG_RED_KEEP:
+            # Güçlü RED tespiti güvenlik açısından ROI dışında diye atılmasın.
+            # Çünkü CARLA'da doğru kırmızı ışık bazen sol/üst banda düşebiliyor.
+            keep_red_outside_roi = (
+                state == "red"
+                and float(state_conf or 0.0) >= float(os.environ.get("TL_ACTIVE_KEEP_RED_STATE_CONF", "0.85"))
+                and float(det_conf or 0.0) >= float(os.environ.get("TL_ACTIVE_KEEP_RED_DET_CONF", "0.40"))
+            )
+
+            if roi_enabled and not keep_red_outside_roi:
                 if not (roi_x_min <= cx_ratio <= roi_x_max and roi_y_min <= cy_ratio <= roi_y_max):
                     det["active_reject_reason"] = (
                         f"active_roi_reject:cx={cx_ratio:.3f},cy={cy_ratio:.3f},"
@@ -2096,10 +2105,50 @@ class PerceptionNode(Node):
         result = self.validate_traffic_light_front_lens(frame, det)
 
         if not result.get("valid", False):
+            # FRONT_LENS_STRONG_CLASSIFIER_KEEP:
+            # CARLA ışıklarında sarı gövde/arka yüz, lens filtresini yanıltabiliyor.
+            # Classifier çok emin RED diyorsa güvenlik için bunu silme; gate'e ulaşsın.
+            old_state = str(det.get("traffic_light_state", "unknown")).lower().strip()
+
+            try:
+                old_conf = float(
+                    det.get(
+                        "traffic_light_state_confidence",
+                        det.get("state_confidence", det.get("state_conf", 0.0)),
+                    )
+                )
+            except Exception:
+                old_conf = 0.0
+
+            keep_red_conf = float(os.environ.get("TL_FRONT_KEEP_RED_CONF", "0.80"))
+            keep_yellow_conf = float(os.environ.get("TL_FRONT_KEEP_YELLOW_CONF", "0.92"))
+
+            keep_strong_classifier = (
+                (old_state == "red" and old_conf >= keep_red_conf)
+                or (old_state == "yellow" and old_conf >= keep_yellow_conf)
+            )
+
+            if keep_strong_classifier:
+                det["drop_traffic_light"] = False
+                det["drop_traffic_light_reason"] = (
+                    "front_lens_invalid_but_classifier_kept:"
+                    + str(result.get("reason", "front_lens_invalid"))
+                )
+                det["traffic_light_state"] = old_state
+                det["traffic_light_state_confidence"] = old_conf
+                det["state_confidence"] = old_conf
+                det["state_conf"] = old_conf
+                det["traffic_light_state_source"] = "classifier_kept_front_lens_invalid"
+                det["state_source"] = "classifier_kept_front_lens_invalid"
+                det["traffic_light_color_reason"] = det["drop_traffic_light_reason"]
+                return True
+
             det["drop_traffic_light"] = True
             det["drop_traffic_light_reason"] = result.get("reason", "front_lens_invalid")
             det["traffic_light_state"] = "unknown"
             det["traffic_light_state_confidence"] = 0.0
+            det["state_confidence"] = 0.0
+            det["state_conf"] = 0.0
             det["traffic_light_state_source"] = "front_lens_gate_drop"
             return False
 

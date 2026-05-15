@@ -7,14 +7,11 @@
         "name": "start",
         "description": "Araç başlangıç konumu",
         "nokta_id": 0,
-        "yaw": 0.15919755399227142
+        "yaw": 0.0
       },
       "geometry": {
         "type": "Point",
-        "coordinates": [
-          -0.0005807131438225307,
-          -0.00022012680703653587
-        ]
+        "coordinates": [29.509014, 40.790343]
       }
     },
     {
@@ -23,14 +20,11 @@
         "name": "gorev_1",
         "description": "1. yolcu alma/bindirme noktası",
         "nokta_id": 1,
-        "yaw": -90.1612319946289
+        "yaw": 0.0
       },
       "geometry": {
         "type": "Point",
-        "coordinates": [
-          -0.0004069506210201047,
-          4.4157653519843836e-05
-        ]
+        "coordinates": [29.508610, 40.789785]
       }
     },
     {
@@ -39,14 +33,11 @@
         "name": "gorev_2",
         "description": "2. yolcu indirme/bindirme noktası",
         "nokta_id": 2,
-        "yaw": 270.43231201171875
+        "yaw": 0.0
       },
       "geometry": {
         "type": "Point",
-        "coordinates": [
-          -0.0004059605555561059,
-          0.0003314499111013447
-        ]
+        "coordinates": [29.508726, 40.789949]
       }
     },
     {
@@ -55,14 +46,11 @@
         "name": "park_giris",
         "description": "Araç otopark giriş bölgesi noktası",
         "nokta_id": 3,
-        "yaw": -179.40325927734375
+        "yaw": 0.0
       },
       "geometry": {
         "type": "Point",
-        "coordinates": [
-          -0.0005544609364695223,
-          0.0005851405019825506
-        ]
+        "coordinates": [29.509223, 40.790149]
       }
     }
   ]

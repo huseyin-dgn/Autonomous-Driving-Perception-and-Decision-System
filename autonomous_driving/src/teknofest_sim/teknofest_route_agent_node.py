@@ -47,6 +47,15 @@ class TeknofestRouteAgentNode(Node):
         self.declare_parameter("mission_stop_override", True)
         self.declare_parameter("ignore_decision_for_mission_test", True)
 
+        # CARLA_TL_GUARD_FIX:
+        # Simülasyonda vision yanlış kırmızıya kilitlenirse CARLA'nın gerçek
+        # trafik ışığı state'i ile emniyetli şekilde düzelt.
+        self.declare_parameter("carla_tl_override_enabled", True)
+        self.declare_parameter("ignore_vision_red_when_carla_not_red", True)
+        self.declare_parameter("post_tl_ignore_s", 7.0)
+        self.declare_parameter("green_release_speed_mps", 2.0)
+        self.declare_parameter("green_release_boost_s", 2.5)
+
         self.carla_root = self.get_parameter("carla_root").value
         self.host = self.get_parameter("host").value
         self.port = int(self.get_parameter("port").value)
@@ -81,6 +90,25 @@ class TeknofestRouteAgentNode(Node):
 
         self.mission_stop_override = bool(self.get_parameter("mission_stop_override").value)
         self.ignore_decision_for_mission_test = False
+
+        self.carla_tl_override_enabled = bool(
+            self.get_parameter("carla_tl_override_enabled").value
+        )
+        self.ignore_vision_red_when_carla_not_red = bool(
+            self.get_parameter("ignore_vision_red_when_carla_not_red").value
+        )
+        self.post_tl_ignore_s = float(self.get_parameter("post_tl_ignore_s").value)
+        self.green_release_speed_mps = float(
+            self.get_parameter("green_release_speed_mps").value
+        )
+        self.green_release_boost_s = float(
+            self.get_parameter("green_release_boost_s").value
+        )
+
+        self.last_carla_tl_state = "unknown"
+        self.last_carla_tl_at_light = False
+        self.post_tl_ignore_until = 0.0
+        self.green_release_until = 0.0
 
         self.carla = load_carla(self.carla_root)
         self.client = self.carla.Client(self.host, self.port)
@@ -372,6 +400,105 @@ class TeknofestRouteAgentNode(Node):
 
         return self.carla.Location(x=ego_loc.x + dx, y=ego_loc.y + dy, z=ego_loc.z)
 
+    def get_turn_direction_to_target(self, target):
+        """
+        Ego'dan hedefe göre kaba dönüş niyeti:
+        - left  : hedef ego'nun solunda kalıyor
+        - right : hedef ego'nun sağında kalıyor
+        - straight: büyük yan sapma yok
+
+        Bu sadece şerit/yaklaşım seçimi için kullanılır; asıl rotayı BasicAgent üretir.
+        """
+        try:
+            raw_loc = self.mission_geo_to_carla_location_near_ego(target)
+            ego_tf = self.ego.get_transform()
+            ego_loc = ego_tf.location
+            fwd = ego_tf.get_forward_vector()
+            right = ego_tf.get_right_vector()
+
+            vx = raw_loc.x - ego_loc.x
+            vy = raw_loc.y - ego_loc.y
+
+            forward_dot = vx * fwd.x + vy * fwd.y
+            right_dot = vx * right.x + vy * right.y
+
+            # Sağ pozitif, sol negatif.
+            angle_deg = math.degrees(math.atan2(right_dot, max(0.001, forward_dot)))
+
+            if angle_deg < -22.0:
+                return "left", angle_deg
+            if angle_deg > 22.0:
+                return "right", angle_deg
+
+            return "straight", angle_deg
+
+        except Exception as exc:
+            self.get_logger().warning(f"turn direction hesaplanamadı: {exc}", throttle_duration_sec=1.0)
+            return "unknown", 0.0
+
+    def get_same_direction_adjacent_lane(self, wp, turn_direction):
+        """
+        Mümkünse aynı yöndeki komşu şeridi seç.
+        Sol dönüşte sol şerit, sağ dönüşte sağ şerit tercih edilir.
+        """
+        try:
+            if wp is None:
+                return None
+
+            if turn_direction == "left":
+                cand = wp.get_left_lane()
+            elif turn_direction == "right":
+                cand = wp.get_right_lane()
+            else:
+                return None
+
+            if cand is None:
+                return None
+
+            if cand.lane_type != self.carla.LaneType.Driving:
+                return None
+
+            # CARLA'da aynı yöndeki lane'ler genelde aynı lane_id işaretindedir.
+            try:
+                if int(cand.lane_id) * int(wp.lane_id) <= 0:
+                    return None
+            except Exception:
+                pass
+
+            return cand
+
+        except Exception:
+            return None
+
+    def shifted_location_from_waypoint(self, wp, lateral_shift_m):
+        loc = wp.transform.location
+
+        if abs(float(lateral_shift_m)) < 0.05:
+            return self.carla.Location(x=loc.x, y=loc.y, z=loc.z + 0.2)
+
+        right_vec = wp.transform.get_right_vector()
+        shifted_x = loc.x + right_vec.x * float(lateral_shift_m)
+        shifted_y = loc.y + right_vec.y * float(lateral_shift_m)
+
+        # Shift sonrası tekrar yola projekte et ki off-road hedef verilmesin.
+        shifted = self.carla.Location(x=shifted_x, y=shifted_y, z=loc.z + 0.2)
+
+        try:
+            shifted_wp = self.map.get_waypoint(
+                shifted,
+                project_to_road=True,
+                lane_type=self.carla.LaneType.Driving,
+            )
+
+            if shifted_wp is not None:
+                sloc = shifted_wp.transform.location
+                return self.carla.Location(x=sloc.x, y=sloc.y, z=sloc.z + 0.2)
+
+        except Exception:
+            pass
+
+        return shifted
+
     def destination_from_target(self, target):
         raw_loc = self.mission_geo_to_carla_location_near_ego(target)
 
@@ -385,18 +512,61 @@ class TeknofestRouteAgentNode(Node):
             self.get_logger().warning("Target waypoint bulunamadı, raw location kullanılacak.")
             return raw_loc
 
-        loc = wp.transform.location
+        stage = str(self.get_stage() or "")
+        target_name = str(target.get("name", "")).lower()
+        turn_dir, turn_angle = self.get_turn_direction_to_target(target)
 
-        # Sağ şerit / sağ tarafa yanaşma offset'i.
-        # Pozitif değer waypoint'in sağ vektörüne doğru kaydırır.
-        try:
-            right_vec = wp.transform.get_right_vector()
-            lane_shift_m = 2.2
-            shifted_x = loc.x + right_vec.x * lane_shift_m
-            shifted_y = loc.y + right_vec.y * lane_shift_m
-            return self.carla.Location(x=shifted_x, y=shifted_y, z=loc.z + 0.2)
-        except Exception:
-            return self.carla.Location(x=loc.x, y=loc.y, z=loc.z + 0.2)
+        selected_wp = wp
+        lateral_shift_m = 0.0
+        approach_reason = f"straight_or_center:turn={turn_dir},angle={turn_angle:.1f}"
+
+        # Sola dönüşte sağ şeride zorla sokma. Mümkünse aynı yönde sol şeridi seç.
+        if turn_dir == "left":
+            left_wp = self.get_same_direction_adjacent_lane(wp, "left")
+            if left_wp is not None:
+                selected_wp = left_wp
+                lateral_shift_m = 0.0
+                approach_reason = f"left_turn_use_left_lane:angle={turn_angle:.1f}"
+            else:
+                # Komşu şerit yoksa en azından sağa kaydırma yapma; hafif sola pre-position.
+                selected_wp = wp
+                lateral_shift_m = -0.8
+                approach_reason = f"left_turn_soft_left_shift:angle={turn_angle:.1f}"
+
+        elif turn_dir == "right":
+            right_wp = self.get_same_direction_adjacent_lane(wp, "right")
+            if right_wp is not None:
+                selected_wp = right_wp
+                lateral_shift_m = 0.0
+                approach_reason = f"right_turn_use_right_lane:angle={turn_angle:.1f}"
+            else:
+                selected_wp = wp
+                lateral_shift_m = 0.6
+                approach_reason = f"right_turn_soft_right_shift:angle={turn_angle:.1f}"
+
+        # Park hedefinde hafif sağ yanaşma mantıklı, ama bunu her hedefe uygulama.
+        if stage in {"GO_TO_PARK", "PARKING"} or "park" in target_name:
+            if turn_dir == "left":
+                # Parka giderken bile sola dönüş varsa sağa çekme.
+                lateral_shift_m = min(lateral_shift_m, 0.0)
+                approach_reason += "|park_left_no_right_shift"
+            elif turn_dir == "right":
+                lateral_shift_m = max(lateral_shift_m, 0.6)
+                approach_reason += "|park_right_shift"
+            else:
+                lateral_shift_m = 0.4
+                approach_reason += "|park_gentle_right_shift"
+
+        dest = self.shifted_location_from_waypoint(selected_wp, lateral_shift_m)
+
+        self.get_logger().info(
+            f"Destination lane approach: target={target.get('name')} "
+            f"stage={stage} turn={turn_dir} angle={turn_angle:.1f} "
+            f"shift={lateral_shift_m:.2f} reason={approach_reason}",
+            throttle_duration_sec=0.5,
+        )
+
+        return dest
 
     def set_agent_destination_if_needed(self):
         target = self.get_target()
@@ -444,6 +614,77 @@ class TeknofestRouteAgentNode(Node):
         control.manual_gear_shift = False
         return control
 
+    def normalize_carla_tl_state(self, raw_state):
+        if raw_state is None:
+            return "unknown"
+
+        name = getattr(raw_state, "name", None)
+        if name is None:
+            name = str(raw_state)
+
+        name = str(name).split(".")[-1].strip().lower()
+
+        if name in {"red", "trafficlightstatered"}:
+            return "red"
+        if name in {"yellow", "amber", "trafficlightstateyellow"}:
+            return "yellow"
+        if name in {"green", "trafficlightstategreen"}:
+            return "green"
+
+        return name or "unknown"
+
+    def get_carla_tl_guard_state(self):
+        out = {
+            "at_light": False,
+            "state": "unknown",
+            "id": None,
+        }
+
+        try:
+            at_light = False
+            try:
+                at_light = bool(self.ego.is_at_traffic_light())
+            except Exception:
+                at_light = False
+
+            tl_actor = None
+            try:
+                tl_actor = self.ego.get_traffic_light()
+            except Exception:
+                tl_actor = None
+
+            raw_state = None
+
+            if tl_actor is not None:
+                out["id"] = getattr(tl_actor, "id", None)
+                try:
+                    raw_state = tl_actor.get_state()
+                except Exception:
+                    raw_state = None
+
+            if raw_state is None:
+                try:
+                    raw_state = self.ego.get_traffic_light_state()
+                except Exception:
+                    raw_state = None
+
+            out["at_light"] = bool(at_light or tl_actor is not None)
+            out["state"] = self.normalize_carla_tl_state(raw_state)
+
+        except Exception as exc:
+            self.get_logger().warning(f"CARLA TL guard okunamadı: {exc}", throttle_duration_sec=1.0)
+
+        return out
+
+    def is_traffic_light_stop_reason(self, reason):
+        r = str(reason or "").lower()
+        return (
+            "traffic_light" in r
+            or "red_light" in r
+            or "yellow_light" in r
+            or "tl_" in r
+        )
+
     def resolve_target_speed(self):
         now = time.time()
 
@@ -472,6 +713,67 @@ class TeknofestRouteAgentNode(Node):
             decision = str(self.latest_decision.get("decision", "STOP")).upper()
             reason = str(self.latest_decision.get("reason", "unknown"))
 
+            # CARLA_TL_GUARD_FIX:
+            # Vision red yanlış/stale kalırsa CARLA state ile şartname davranışını koru.
+            if self.carla_tl_override_enabled:
+                tl_guard = self.get_carla_tl_guard_state()
+                at_tl = bool(tl_guard.get("at_light", False))
+                tl_state = str(tl_guard.get("state", "unknown")).lower()
+                tl_reason = self.is_traffic_light_stop_reason(reason)
+
+                now2 = time.time()
+
+                # Işıktan çıkınca kısa süre yeni red tespitlerini yut.
+                if self.last_carla_tl_at_light and not at_tl:
+                    self.post_tl_ignore_until = now2 + self.post_tl_ignore_s
+
+                # Kırmızı/sarıdan yeşile döndüyse kalkış boost'u.
+                if self.last_carla_tl_state in {"red", "yellow"} and tl_state == "green":
+                    self.green_release_until = now2 + self.green_release_boost_s
+                    self.post_tl_ignore_until = now2 + self.post_tl_ignore_s
+
+                self.last_carla_tl_state = tl_state
+                self.last_carla_tl_at_light = at_tl
+
+                if at_tl and tl_state == "red":
+                    return 0.0, "carla_tl_red"
+
+                if at_tl and tl_state == "yellow":
+                    return min(self.slow_speed_mps, 0.60), "carla_tl_yellow"
+
+                if at_tl and tl_state == "green":
+                    if decision == "STOP" and tl_reason:
+                        return self.clamp(
+                            max(self.green_release_speed_mps, self.go_speed_mps),
+                            0.0,
+                            self.max_speed_mps,
+                        ), "carla_tl_green_release"
+
+                if now2 < self.post_tl_ignore_until and decision == "STOP" and tl_reason:
+                    return self.clamp(
+                        max(self.green_release_speed_mps, self.go_speed_mps),
+                        0.0,
+                        self.max_speed_mps,
+                    ), "post_tl_pass_ignore_vision_red"
+
+                if (
+                    self.ignore_vision_red_when_carla_not_red
+                    and decision == "STOP"
+                    and tl_reason
+                    and tl_state != "red"
+                ):
+                    return self.clamp(
+                        max(self.green_release_speed_mps, self.go_speed_mps),
+                        0.0,
+                        self.max_speed_mps,
+                    ), f"ignore_vision_red_carla_{tl_state}"
+
+            # PERSON_FALSE_STOP_RELAX:
+            # Bu senaryoda NPC/yaya yokken düşük güvenli person hold aracı yol ortasında/direk yanında kilitleyebiliyor.
+            # Person kaynaklı STOP'u tam duruş yerine yavaş geçişe çevir.
+            if decision == "STOP" and "person" in reason.lower():
+                return min(self.slow_speed_mps, 1.0), f"person_stop_relaxed:{reason}"
+
             if decision == "STOP":
                 return 0.0, f"decision_stop:{reason}"
 
@@ -483,8 +785,29 @@ class TeknofestRouteAgentNode(Node):
             except Exception:
                 target_speed = self.go_speed_mps
 
-        if distance_to_target is not None and distance_to_target < 8.0:
-            target_speed = min(target_speed, 0.55)
+        # SMOOTH_APPROACH_FIX:
+        # Eski davranış: hedefe 8m kala hedef hız bir anda 0.55'e düşüyordu.
+        # Bu da 1.7-1.9 m/s giderken ani fren gibi görünüyordu.
+        # Yeni davranış: kademeli yaklaş, sadece çok yakında iyice yavaşla.
+        if distance_to_target is not None:
+            try:
+                d = float(distance_to_target)
+
+                if stage in {"GO_TO_PARK", "PARKING"}:
+                    if d < 3.0:
+                        target_speed = min(target_speed, 0.45)
+                    elif d < 5.0:
+                        target_speed = min(target_speed, 0.75)
+                    elif d < 8.0:
+                        target_speed = min(target_speed, 1.15)
+                else:
+                    if d < 3.0:
+                        target_speed = min(target_speed, 0.55)
+                    elif d < 6.0:
+                        target_speed = min(target_speed, 1.00)
+
+            except Exception:
+                pass
 
         return self.clamp(target_speed, 0.0, self.max_speed_mps), "mission_test_ignore_decision"
 
@@ -533,15 +856,15 @@ class TeknofestRouteAgentNode(Node):
                 desired_brake = 0.0
 
                 if speed_error > 0.20:
-                    desired_throttle = 0.055 + 0.14 * speed_error
-                    desired_throttle = self.clamp(desired_throttle, 0.055, 0.32)
+                    desired_throttle = 0.12 + 0.28 * speed_error
+                    desired_throttle = self.clamp(desired_throttle, 0.12, 0.50)
                     desired_brake = 0.0
-                elif overspeed <= 0.55:
+                elif overspeed <= 0.95:
                     desired_throttle = 0.018 if current_speed < target_speed else 0.0
                     desired_brake = 0.0
                 else:
                     desired_throttle = 0.0
-                    desired_brake = self.clamp(0.10 * (overspeed - 0.55), 0.0, 0.08)
+                    desired_brake = self.clamp(0.05 * (overspeed - 0.95), 0.0, 0.035)
 
                 def _slew(cur, dst, step):
                     cur = float(cur)
@@ -553,8 +876,8 @@ class TeknofestRouteAgentNode(Node):
                         return max(dst, cur - step)
                     return cur
 
-                throttle_cmd = _slew(self.last_throttle_cmd, desired_throttle, 0.030)
-                brake_cmd = _slew(self.last_brake_cmd, desired_brake, 0.035)
+                throttle_cmd = _slew(self.last_throttle_cmd, desired_throttle, 0.080)
+                brake_cmd = _slew(self.last_brake_cmd, desired_brake, 0.018)
 
                 if brake_cmd > 0.001:
                     throttle_cmd = 0.0
@@ -562,15 +885,15 @@ class TeknofestRouteAgentNode(Node):
                 self.last_throttle_cmd = throttle_cmd
                 self.last_brake_cmd = brake_cmd
 
-                control.throttle = self.clamp(throttle_cmd, 0.0, 0.32)
-                control.brake = self.clamp(brake_cmd, 0.0, 0.08)
+                control.throttle = self.clamp(throttle_cmd, 0.0, 0.50)
+                control.brake = self.clamp(brake_cmd, 0.0, 0.035)
                 control.hand_brake = False
                 control.manual_gear_shift = False
 
         # HARD SAFETY CLAMP: araç kontrolden çıkmasın diye hız/gaz sınırı
         try:
             control.throttle = self.clamp(control.throttle, 0.0, 0.40)
-            control.steer = self.clamp(control.steer, -0.26, 0.26)
+            control.steer = self.clamp(control.steer, -self.max_steer, self.max_steer)
         except Exception:
             pass
 
