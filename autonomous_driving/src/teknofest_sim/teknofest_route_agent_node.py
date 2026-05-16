@@ -33,6 +33,7 @@ class TeknofestRouteAgentNode(Node):
         self.declare_parameter("slow_speed_mps", 0.5)
         self.declare_parameter("parking_speed_mps", 0.35)
 
+        # BasicAgent direksiyonu kendi üretir. Bunu çok düşük tutarsan araç dönemiyor.
         self.declare_parameter("max_steer", 0.70)
         self.declare_parameter("lane_assist_enabled", True)
         self.declare_parameter("lane_topic", "/adas/lane/assist")
@@ -44,9 +45,11 @@ class TeknofestRouteAgentNode(Node):
         self.declare_parameter("lane_allowed_stages", "GO_TO_TASK,GO_TO_PARK")
 
         self.declare_parameter("mission_stop_override", True)
-        self.declare_parameter("ignore_decision_for_mission_test", False)
+        self.declare_parameter("ignore_decision_for_mission_test", True)
 
-
+        # CARLA_TL_GUARD_FIX:
+        # Simülasyonda vision yanlış kırmızıya kilitlenirse CARLA'nın gerçek
+        # trafik ışığı state'i ile emniyetli şekilde düzelt.
         self.declare_parameter("carla_tl_override_enabled", True)
         self.declare_parameter("ignore_vision_red_when_carla_not_red", True)
         self.declare_parameter("post_tl_ignore_s", 7.0)
@@ -86,7 +89,7 @@ class TeknofestRouteAgentNode(Node):
         ]
 
         self.mission_stop_override = bool(self.get_parameter("mission_stop_override").value)
-        self.ignore_decision_for_mission_test = bool(self.get_parameter("ignore_decision_for_mission_test").value)
+        self.ignore_decision_for_mission_test = False
 
         self.carla_tl_override_enabled = bool(
             self.get_parameter("carla_tl_override_enabled").value
@@ -211,19 +214,7 @@ class TeknofestRouteAgentNode(Node):
                                 cx = (float(bbox[0]) + float(bbox[2])) / 2.0
 
                         if cx is not None:
-                            # Görüntü genişliği sabit 960 değildir. Şu an simde 640x360 çalışıyoruz.
-                            image_w = (
-                                data.get("image_width")
-                                or data.get("frame_width")
-                                or data.get("width")
-                                or 640
-                            )
-                            try:
-                                image_w = max(1.0, float(image_w))
-                            except Exception:
-                                image_w = 640.0
-
-                            cx_ratio = float(cx) / image_w
+                            cx_ratio = float(cx) / 960.0
                             bottom_ok = True if bottom is None else float(bottom) >= 0.45
                             in_lane = 0.30 <= cx_ratio <= 0.70 and bottom_ok
 
@@ -720,9 +711,8 @@ class TeknofestRouteAgentNode(Node):
         if stage == "PARKING":
             return self.parking_speed_mps, "parking_slow"
 
-        if self.ignore_decision_for_mission_test:
+        if False and self.ignore_decision_for_mission_test:
             target_speed = self.go_speed_mps
-            target_reason = "mission_test_ignore_decision"
         else:
             if now - self.last_decision_time > 2.0:
                 return 0.0, "decision_timeout"
@@ -802,8 +792,6 @@ class TeknofestRouteAgentNode(Node):
             except Exception:
                 target_speed = self.go_speed_mps
 
-            target_reason = f"decision_go:{reason}"
-
         # SMOOTH_APPROACH_FIX:
         # Eski davranış: hedefe 8m kala hedef hız bir anda 0.55'e düşüyordu.
         # Bu da 1.7-1.9 m/s giderken ani fren gibi görünüyordu.
@@ -828,7 +816,7 @@ class TeknofestRouteAgentNode(Node):
             except Exception:
                 pass
 
-        return self.clamp(target_speed, 0.0, self.max_speed_mps), target_reason
+        return self.clamp(target_speed, 0.0, self.max_speed_mps), "mission_test_ignore_decision"
 
     def tick(self):
         target_speed, reason = self.resolve_target_speed()

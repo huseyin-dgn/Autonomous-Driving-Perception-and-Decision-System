@@ -28,6 +28,55 @@ class TeknofestScenarioNode(Node):
         self.declare_parameter("static_obstacle_count", 4)
         self.declare_parameter("dynamic_crossing_enabled", True)
 
+        # Trafik levhası test markerları.
+        # camera_view modu: levhaları doğrudan ego kameranın görebileceği yakın alana koyar.
+        self.declare_parameter("traffic_sign_markers_enabled", True)
+        self.declare_parameter("traffic_sign_marker_count", 8)
+        self.declare_parameter("traffic_sign_marker_mode", "camera_view")
+        self.declare_parameter("traffic_sign_marker_first_distance", 10.0)
+        self.declare_parameter("traffic_sign_marker_distance_step", 5.0)
+        self.declare_parameter("traffic_sign_marker_side_offset", 2.2)
+        self.declare_parameter("traffic_sign_marker_z", 1.10)
+        self.declare_parameter("traffic_sign_marker_debug_draw", True)
+        self.declare_parameter(
+            "traffic_sign_marker_blueprints",
+            ",".join([
+                "static.prop.trafficwarning",
+                "static.prop.streetsign04",
+                "static.prop.streetsign01",
+                "static.prop.streetsign",
+                "static.prop.busstoplb",
+                "static.prop.busstop",
+                "static.prop.trafficcone01",
+                "static.prop.trafficcone02",
+            ]),
+        )
+
+        # Ana CARLA senaryosu için görünür trafik levhası/işaret markerları.
+        # CARLA standart assetlerinde Türkçe özel levhalar garanti değil.
+        # Bu yüzden mevcut static.prop tabelalar kullanılıyor.
+        # Perception node bunları /adas/camera/front/image_raw üzerinden görecek.
+        self.declare_parameter("traffic_sign_markers_enabled", True)
+        self.declare_parameter("traffic_sign_marker_count", 8)
+        self.declare_parameter("traffic_sign_marker_start_index", 7)
+        self.declare_parameter("traffic_sign_marker_stride", 6)
+        self.declare_parameter("traffic_sign_marker_side_offset", 3.0)
+        self.declare_parameter("traffic_sign_marker_z", 0.65)
+        self.declare_parameter("traffic_sign_marker_yaw_offset", -90.0)
+        self.declare_parameter(
+            "traffic_sign_marker_blueprints",
+            ",".join([
+                "static.prop.trafficwarning",
+                "static.prop.streetsign04",
+                "static.prop.streetsign01",
+                "static.prop.streetsign",
+                "static.prop.busstoplb",
+                "static.prop.busstop",
+                "static.prop.trafficcone01",
+                "static.prop.trafficcone02",
+            ]),
+        )
+
         self.carla_root = self.get_parameter("carla_root").value
         self.host = self.get_parameter("host").value
         self.port = int(self.get_parameter("port").value)
@@ -42,6 +91,59 @@ class TeknofestScenarioNode(Node):
         self.static_obstacle_count = int(self.get_parameter("static_obstacle_count").value)
         self.dynamic_crossing_enabled = bool(self.get_parameter("dynamic_crossing_enabled").value)
 
+        self.traffic_sign_markers_enabled = bool(
+            self.get_parameter("traffic_sign_markers_enabled").value
+        )
+        self.traffic_sign_marker_count = int(
+            self.get_parameter("traffic_sign_marker_count").value
+        )
+        self.traffic_sign_marker_mode = str(
+            self.get_parameter("traffic_sign_marker_mode").value
+        )
+        self.traffic_sign_marker_first_distance = float(
+            self.get_parameter("traffic_sign_marker_first_distance").value
+        )
+        self.traffic_sign_marker_distance_step = float(
+            self.get_parameter("traffic_sign_marker_distance_step").value
+        )
+        self.traffic_sign_marker_side_offset = float(
+            self.get_parameter("traffic_sign_marker_side_offset").value
+        )
+        self.traffic_sign_marker_z = float(
+            self.get_parameter("traffic_sign_marker_z").value
+        )
+        self.traffic_sign_marker_debug_draw = bool(
+            self.get_parameter("traffic_sign_marker_debug_draw").value
+        )
+        self.traffic_sign_marker_blueprints = str(
+            self.get_parameter("traffic_sign_marker_blueprints").value
+        )
+
+        self.traffic_sign_markers_enabled = bool(
+            self.get_parameter("traffic_sign_markers_enabled").value
+        )
+        self.traffic_sign_marker_count = int(
+            self.get_parameter("traffic_sign_marker_count").value
+        )
+        self.traffic_sign_marker_start_index = int(
+            self.get_parameter("traffic_sign_marker_start_index").value
+        )
+        self.traffic_sign_marker_stride = int(
+            self.get_parameter("traffic_sign_marker_stride").value
+        )
+        self.traffic_sign_marker_side_offset = float(
+            self.get_parameter("traffic_sign_marker_side_offset").value
+        )
+        self.traffic_sign_marker_z = float(
+            self.get_parameter("traffic_sign_marker_z").value
+        )
+        self.traffic_sign_marker_yaw_offset = float(
+            self.get_parameter("traffic_sign_marker_yaw_offset").value
+        )
+        self.traffic_sign_marker_blueprints = str(
+            self.get_parameter("traffic_sign_marker_blueprints").value
+        )
+
         self.carla = load_carla(self.carla_root)
         self.client = self.carla.Client(self.host, self.port)
         self.client.set_timeout(self.timeout)
@@ -49,6 +151,9 @@ class TeknofestScenarioNode(Node):
         self.map = self.world.get_map()
         self.bp_lib = self.world.get_blueprint_library()
         self.created_actors = []
+        self.traffic_sign_marker_actors = []
+        self.traffic_sign_marker_infos = []
+        self.traffic_sign_marker_actors = []
 
         self.ego = self.wait_for_ego()
         self.tm = self.client.get_trafficmanager(self.traffic_manager_port)
@@ -271,45 +376,296 @@ class TeknofestScenarioNode(Node):
         self.add_actor(walker)
         self.get_logger().info("Dinamik geçiş engeli/yaya spawn edildi.")
 
-    def spawn_sign_markers(self):
-        """
-        CARLA'da özel Türk trafik tabelası assetleri yoksa bile video ve logda görünür olacak
-        temsilî tabela/işaret noktaları oluşturur. Asıl karar mekanizması perception_node +
-        decision_node üzerinden çalışmaya devam eder.
-        """
-        prop_patterns = [
-            "static.prop.trafficwarning",
-            "static.prop.trafficcone*",
-            "static.prop.warningconstruction*",
+    def resolve_blueprints(self, patterns_text):
+        patterns = [
+            p.strip()
+            for p in str(patterns_text).split(",")
+            if p.strip()
         ]
 
-        props = []
-        for p in prop_patterns:
-            props.extend(list(self.bp_lib.filter(p)))
+        blueprints = []
+        seen = set()
 
-        if not props:
+        for pattern in patterns:
+            matches = list(self.bp_lib.filter(pattern))
+            if not matches:
+                continue
+
+            for bp in matches:
+                if bp.id in seen:
+                    continue
+                seen.add(bp.id)
+                blueprints.append(bp)
+
+        return blueprints
+
+    def spawn_single_sign_marker(self, bp, wp, side_sign, index):
+        right_vec = wp.transform.get_right_vector()
+
+        side_offset = self.traffic_sign_marker_side_offset * side_sign
+        loc = wp.transform.location + self.carla.Location(
+            x=right_vec.x * side_offset,
+            y=right_vec.y * side_offset,
+            z=self.traffic_sign_marker_z,
+        )
+
+        yaw = wp.transform.rotation.yaw + self.traffic_sign_marker_yaw_offset
+        if side_sign < 0:
+            yaw += 180.0
+
+        transform = self.carla.Transform(
+            loc,
+            self.carla.Rotation(
+                pitch=0.0,
+                yaw=yaw,
+                roll=0.0,
+            ),
+        )
+
+        actor = self.world.try_spawn_actor(bp, transform)
+        if actor is None:
+            return None
+
+        self.add_actor(actor)
+        self.traffic_sign_marker_actors.append(actor)
+
+        self.get_logger().info(
+            "TRAFFIC_SIGN_MARKER_SPAWNED "
+            f"idx={index} type_id={actor.type_id} "
+            f"loc=({loc.x:.1f},{loc.y:.1f},{loc.z:.1f}) yaw={yaw:.1f}"
+        )
+        return actor
+
+    def resolve_blueprints(self, patterns_text):
+        patterns = [
+            p.strip()
+            for p in str(patterns_text).split(",")
+            if p.strip()
+        ]
+
+        blueprints = []
+        seen = set()
+
+        for pattern in patterns:
+            matches = list(self.bp_lib.filter(pattern))
+            for bp in matches:
+                if bp.id in seen:
+                    continue
+                seen.add(bp.id)
+                blueprints.append(bp)
+
+        return blueprints
+
+    def draw_marker_debug(self, actor, index, loc):
+        if not self.traffic_sign_marker_debug_draw:
             return
 
-        waypoints = self.get_route_waypoints_ahead(count=70, step_m=5.0)
-        selected = waypoints[10:50:15]
-
-        for i, wp in enumerate(selected):
-            right_vec = wp.transform.get_right_vector()
-            loc = wp.transform.location + self.carla.Location(
-                x=right_vec.x * 3.0,
-                y=right_vec.y * 3.0,
-                z=0.4,
+        try:
+            color = self.carla.Color(255, 0, 0)
+            self.world.debug.draw_string(
+                loc + self.carla.Location(z=2.0),
+                f"SIGN#{index}",
+                draw_shadow=True,
+                color=color,
+                life_time=9999.0,
+                persistent_lines=True,
             )
+
+            bb = actor.bounding_box
+            self.world.debug.draw_box(
+                bb,
+                actor.get_transform().rotation,
+                thickness=0.08,
+                color=color,
+                life_time=9999.0,
+                persistent_lines=True,
+            )
+        except Exception as exc:
+            self.get_logger().warning(f"SIGN_DEBUG_DRAW_ERROR idx={index}: {exc}")
+
+    def spawn_sign_marker_at_transform(self, bp, transform, index, forward_m, side_m):
+        actor = self.world.try_spawn_actor(bp, transform)
+        if actor is None:
+            self.get_logger().warning(
+                f"TRAFFIC_SIGN_MARKER_FAILED idx={index} bp={bp.id} "
+                f"loc=({transform.location.x:.1f},{transform.location.y:.1f},{transform.location.z:.1f})"
+            )
+            return None
+
+        self.add_actor(actor)
+        self.traffic_sign_marker_actors.append(actor)
+
+        info = {
+            "idx": index,
+            "type_id": actor.type_id,
+            "forward_m": round(float(forward_m), 2),
+            "side_m": round(float(side_m), 2),
+            "x": round(float(transform.location.x), 2),
+            "y": round(float(transform.location.y), 2),
+            "z": round(float(transform.location.z), 2),
+            "yaw": round(float(transform.rotation.yaw), 2),
+        }
+        self.traffic_sign_marker_infos.append(info)
+
+        self.draw_marker_debug(actor, index, transform.location)
+
+        self.get_logger().info(
+            "TRAFFIC_SIGN_MARKER_VISIBLE "
+            f"idx={index} type={actor.type_id} "
+            f"forward={forward_m:.1f}m side={side_m:.1f}m "
+            f"loc=({transform.location.x:.1f},{transform.location.y:.1f},{transform.location.z:.1f}) "
+            f"yaw={transform.rotation.yaw:.1f}"
+        )
+
+        return actor
+
+    def spawn_sign_markers_camera_view(self, props):
+        ego_tf = self.ego.get_transform()
+        ego_loc = ego_tf.location
+        ego_rot = ego_tf.rotation
+
+        fwd = ego_tf.get_forward_vector()
+        right = ego_tf.get_right_vector()
+
+        spawned = 0
+
+        for i in range(self.traffic_sign_marker_count):
+            bp = props[i % len(props)]
+
+            forward_m = self.traffic_sign_marker_first_distance + (
+                i * self.traffic_sign_marker_distance_step
+            )
+
+            # Sağ-sol dönüşümlü ama görüş alanında kalacak kadar yakın.
+            side_sign = 1.0 if i % 2 == 0 else -1.0
+            side_m = self.traffic_sign_marker_side_offset * side_sign
+
+            loc = ego_loc + self.carla.Location(
+                x=fwd.x * forward_m + right.x * side_m,
+                y=fwd.y * forward_m + right.y * side_m,
+                z=self.traffic_sign_marker_z,
+            )
+
+            # Levhayı ego aracına doğru çevirmeye çalışıyoruz.
+            # Bazı CARLA proplarında ön yüz ekseni farklı olabiliyor; bu yüzden
+            # 0/180 dönüşümlü yaw veriyoruz.
+            yaw = ego_rot.yaw + 180.0
+            if i % 2 == 1:
+                yaw = ego_rot.yaw
+
             transform = self.carla.Transform(
                 loc,
-                self.carla.Rotation(yaw=wp.transform.rotation.yaw - 90.0),
+                self.carla.Rotation(
+                    pitch=0.0,
+                    yaw=yaw,
+                    roll=0.0,
+                ),
             )
 
-            actor = self.world.try_spawn_actor(random.choice(props), transform)
-            if actor is not None:
-                self.add_actor(actor)
+            actor = self.spawn_sign_marker_at_transform(
+                bp=bp,
+                transform=transform,
+                index=i,
+                forward_m=forward_m,
+                side_m=side_m,
+            )
 
-        self.get_logger().info(f"Tabela/işaret marker spawn edildi: {len(selected)}")
+            if actor is not None:
+                spawned += 1
+
+        return spawned
+
+    def spawn_sign_markers_route_view(self, props):
+        waypoints = self.get_route_waypoints_ahead(count=90, step_m=4.0)
+        if len(waypoints) < 10:
+            self.get_logger().warning(
+                f"ROUTE_SIGN_MARKER_FAILED yeterli waypoint yok len={len(waypoints)}"
+            )
+            return 0
+
+        spawned = 0
+        start_idx = 5
+        stride = 5
+
+        for i, wp in enumerate(waypoints[start_idx::stride]):
+            if spawned >= self.traffic_sign_marker_count:
+                break
+
+            bp = props[spawned % len(props)]
+            right_vec = wp.transform.get_right_vector()
+
+            side_sign = 1.0 if spawned % 2 == 0 else -1.0
+            side_m = self.traffic_sign_marker_side_offset * side_sign
+
+            loc = wp.transform.location + self.carla.Location(
+                x=right_vec.x * side_m,
+                y=right_vec.y * side_m,
+                z=self.traffic_sign_marker_z,
+            )
+
+            yaw = wp.transform.rotation.yaw + 180.0
+            if spawned % 2 == 1:
+                yaw = wp.transform.rotation.yaw
+
+            transform = self.carla.Transform(
+                loc,
+                self.carla.Rotation(pitch=0.0, yaw=yaw, roll=0.0),
+            )
+
+            actor = self.spawn_sign_marker_at_transform(
+                bp=bp,
+                transform=transform,
+                index=spawned,
+                forward_m=(start_idx + i * stride) * 4.0,
+                side_m=side_m,
+            )
+
+            if actor is not None:
+                spawned += 1
+
+        return spawned
+
+    def spawn_sign_markers(self):
+        """
+        Görünür trafik levhası/işaret markerları spawn eder.
+
+        camera_view modu:
+        - Levhaları ego aracın ön görüş alanına koyar.
+        - CARLA viewport'ta SIGN# etiketi ve kırmızı debug box gösterir.
+        - Perception node aynı objeleri /adas/camera/front/image_raw üzerinden görür.
+
+        route_view modu:
+        - Levhaları rota waypointleri boyunca dizer.
+        """
+        if not self.traffic_sign_markers_enabled:
+            self.get_logger().info("Trafik levhası marker spawn kapalı.")
+            return
+
+        props = self.resolve_blueprints(self.traffic_sign_marker_blueprints)
+
+        if not props:
+            self.get_logger().warning(
+                "Trafik levhası/işaret blueprint bulunamadı. "
+                f"patterns={self.traffic_sign_marker_blueprints}"
+            )
+            return
+
+        self.get_logger().info(
+            "TRAFFIC_SIGN_MARKER_BLUEPRINTS "
+            + ", ".join([bp.id for bp in props])
+        )
+
+        if self.traffic_sign_marker_mode == "route_view":
+            spawned = self.spawn_sign_markers_route_view(props)
+        else:
+            spawned = self.spawn_sign_markers_camera_view(props)
+
+        self.get_logger().info(
+            "TRAFFIC_SIGN_MARKER_SUMMARY "
+            f"mode={self.traffic_sign_marker_mode} "
+            f"spawned={spawned}/{self.traffic_sign_marker_count} "
+            f"created_actor_count={len(self.created_actors)}"
+        )
 
     def spawn_all(self):
         # PURE MISSION TEST MODE:
@@ -327,15 +683,33 @@ class TeknofestScenarioNode(Node):
         if self.dynamic_crossing_enabled:
             self.spawn_dynamic_crossing_obstacle()
 
-        # Mission-only testte marker/cone spawn kapalı.
-        # İleride tabela/engel testi yapılırken tekrar açılabilir.
-        # self.spawn_sign_markers()
+        if self.traffic_sign_markers_enabled:
+            self.spawn_sign_markers()
 
     def publish_status(self):
+        alive_markers = []
+        for info, actor in zip(
+            getattr(self, "traffic_sign_marker_infos", []),
+            getattr(self, "traffic_sign_marker_actors", []),
+        ):
+            try:
+                alive = bool(actor.is_alive)
+            except Exception:
+                alive = False
+
+            copied = dict(info)
+            copied["alive"] = alive
+            alive_markers.append(copied)
+
         payload = {
-            "stamp": time.time(),
+            "stamp": round(time.time(), 3),
             "scenario_round": self.scenario_round,
             "created_actor_count": len(self.created_actors),
+            "traffic_sign_markers_enabled": self.traffic_sign_markers_enabled,
+            "traffic_sign_marker_mode": self.traffic_sign_marker_mode,
+            "traffic_sign_marker_count": len(self.traffic_sign_marker_actors),
+            "traffic_sign_marker_alive_count": len([m for m in alive_markers if m.get("alive")]),
+            "traffic_sign_markers": alive_markers,
             "static_or_prop_count": len([
                 a for a in self.created_actors
                 if a.type_id.startswith("static.") or a.type_id.startswith("traffic.")

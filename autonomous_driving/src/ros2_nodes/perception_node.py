@@ -78,6 +78,27 @@ class PerceptionNode(Node):
         self.declare_parameter("traffic_light_conf_threshold", env_float("TRAFFIC_LIGHT_CONF_THRESHOLD", 0.50))
         self.declare_parameter("traffic_sign_conf_threshold", env_float("TRAFFIC_SIGN_CONF_THRESHOLD", 0.20))
 
+        # Traffic sign fine-grained classifier V2
+        self.declare_parameter(
+            "sign_classifier_enabled",
+            env_bool("SIGN_CLASSIFIER_ENABLED", True),
+        )
+        self.declare_parameter(
+            "sign_classifier_model_path",
+            os.environ.get(
+                "SIGN_CLASSIFIER_MODEL_PATH",
+                "/home/huseyindgn/Masaüstü/Autonomous-Driving-Perception-and-Decision-System/autonomous_driving/sign_classifier/outputs_v2/sign_classifier_resnet18_v2_best.pt",
+            ),
+        )
+        self.declare_parameter(
+            "sign_classifier_conf_threshold",
+            env_float("SIGN_CLASSIFIER_CONF_THRESHOLD", 0.45),
+        )
+        self.declare_parameter(
+            "sign_classifier_device",
+            os.environ.get("SIGN_CLASSIFIER_DEVICE", "auto"),
+        )
+
         self.declare_parameter("iou_threshold", env_float("YOLO_IOU", 0.50))
         self.declare_parameter("imgsz", env_int("YOLO_IMGSZ", 960))
         self.declare_parameter("max_det", env_int("YOLO_MAX_DET", 80))
@@ -120,6 +141,19 @@ class PerceptionNode(Node):
         self.traffic_light_conf_threshold = float(self.get_parameter("traffic_light_conf_threshold").value)
         self.traffic_sign_conf_threshold = float(self.get_parameter("traffic_sign_conf_threshold").value)
 
+        self.sign_classifier_enabled = bool(
+            self.get_parameter("sign_classifier_enabled").value
+        )
+        self.sign_classifier_model_path = str(
+            self.get_parameter("sign_classifier_model_path").value
+        )
+        self.sign_classifier_conf_threshold = float(
+            self.get_parameter("sign_classifier_conf_threshold").value
+        )
+        self.sign_classifier_device_name = str(
+            self.get_parameter("sign_classifier_device").value
+        )
+
         self.iou_threshold = float(self.get_parameter("iou_threshold").value)
         self.imgsz = int(self.get_parameter("imgsz").value)
         self.max_det = int(self.get_parameter("max_det").value)
@@ -157,7 +191,16 @@ class PerceptionNode(Node):
         self.tl_state_device = "cpu"
         self.tl_state_ready = False
 
+        # Traffic sign classifier V2 state
+        self.sign_model = None
+        self.sign_transform = None
+        self.sign_class_names = []
+        self.sign_img_size = 224
+        self.sign_device = "cpu"
+        self.sign_ready = False
+
         self.load_traffic_light_state_classifier()
+        self.load_sign_classifier()
 
         self.window_name = "ADAS PERCEPTION DEBUG"
 
@@ -213,6 +256,168 @@ class PerceptionNode(Node):
         self.get_logger().info(f"tl_state_model_path={self.tl_state_model_path}")
         self.get_logger().info(f"tl_state_conf_threshold={self.tl_state_conf_threshold}")
         self.get_logger().info(f"tl_state_device={self.tl_state_device}")
+        self.get_logger().info(f"sign_classifier_enabled={self.sign_classifier_enabled}")
+        self.get_logger().info(f"sign_ready={self.sign_ready}")
+        self.get_logger().info(f"sign_classifier_model_path={self.sign_classifier_model_path}")
+        self.get_logger().info(f"sign_classifier_conf_threshold={self.sign_classifier_conf_threshold}")
+        self.get_logger().info(f"sign_classifier_device={self.sign_device}")
+
+    def build_sign_classifier_model(self, num_classes):
+        model = models.resnet18(weights=None)
+        in_features = model.fc.in_features
+        model.fc = nn.Sequential(
+            nn.Dropout(0.30),
+            nn.Linear(in_features, num_classes),
+        )
+        return model
+
+    def load_sign_classifier(self):
+        if not self.sign_classifier_enabled:
+            self.get_logger().info("sign classifier disabled")
+            return
+
+        if not os.path.exists(self.sign_classifier_model_path):
+            self.get_logger().warning(
+                f"sign classifier model bulunamadı: {self.sign_classifier_model_path}"
+            )
+            return
+
+        try:
+            if self.sign_classifier_device_name == "auto":
+                self.sign_device = "cuda" if torch.cuda.is_available() else "cpu"
+            else:
+                self.sign_device = self.sign_classifier_device_name
+
+            ckpt = torch.load(self.sign_classifier_model_path, map_location=self.sign_device)
+
+            class_names = ckpt.get("class_names", None)
+            if not class_names:
+                raise RuntimeError("sign checkpoint içinde class_names yok")
+
+            self.sign_class_names = list(class_names)
+            self.sign_img_size = int(ckpt.get("img_size", 224))
+
+            model = self.build_sign_classifier_model(len(self.sign_class_names))
+
+            state_dict = (
+                ckpt.get("model_state_dict", None)
+                or ckpt.get("model_state", None)
+                or ckpt.get("state_dict", None)
+            )
+
+            if state_dict is None:
+                raise RuntimeError("sign checkpoint içinde model_state_dict/model_state yok")
+
+            model.load_state_dict(state_dict)
+            model.to(self.sign_device)
+            model.eval()
+
+            self.sign_model = model
+            self.sign_transform = transforms.Compose([
+                transforms.Resize((self.sign_img_size, self.sign_img_size)),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                ),
+            ])
+
+            self.sign_ready = True
+
+            self.get_logger().info(
+                f"sign classifier loaded: classes={self.sign_class_names}"
+            )
+
+        except Exception as exc:
+            self.sign_ready = False
+            self.sign_model = None
+            self.sign_transform = None
+            self.get_logger().error(f"sign classifier yüklenemedi: {exc}")
+
+    def classify_traffic_sign_crop(self, frame, bbox):
+        if not self.sign_classifier_enabled or not self.sign_ready:
+            return {
+                "sign_type": "unknown",
+                "sign_name": self.pretty_sign_name("unknown"),
+                "sign_confidence": 0.0,
+                "sign_probs": {},
+                "sign_source": "classifier_not_ready",
+            }
+
+        frame_h, frame_w = frame.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+
+        x1 = max(0, min(frame_w - 1, x1))
+        y1 = max(0, min(frame_h - 1, y1))
+        x2 = max(0, min(frame_w - 1, x2))
+        y2 = max(0, min(frame_h - 1, y2))
+
+        bw = max(1, x2 - x1)
+        bh = max(1, y2 - y1)
+
+        if bw < 8 or bh < 8:
+            return {
+                "sign_type": "unknown",
+                "sign_name": self.pretty_sign_name("unknown"),
+                "sign_confidence": 0.0,
+                "sign_probs": {},
+                "sign_source": f"classifier_too_small:{bw}x{bh}",
+            }
+
+        pad_x = int(bw * env_float("SIGN_CROP_PAD_X", 0.12))
+        pad_y = int(bh * env_float("SIGN_CROP_PAD_Y", 0.12))
+
+        cx1 = max(0, x1 - pad_x)
+        cy1 = max(0, y1 - pad_y)
+        cx2 = min(frame_w - 1, x2 + pad_x)
+        cy2 = min(frame_h - 1, y2 + pad_y)
+
+        crop = frame[cy1:cy2, cx1:cx2]
+
+        if crop.size == 0:
+            return {
+                "sign_type": "unknown",
+                "sign_name": self.pretty_sign_name("unknown"),
+                "sign_confidence": 0.0,
+                "sign_probs": {},
+                "sign_source": "classifier_empty_crop",
+            }
+
+        rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+        pil_img = PILImage.fromarray(rgb)
+
+        x = self.sign_transform(pil_img)
+        x = x.unsqueeze(0).to(self.sign_device)
+
+        with torch.no_grad():
+            logits = self.sign_model(x)
+            prob_tensor = torch.softmax(logits, dim=1)[0].detach().cpu()
+
+        probs = {}
+        for i, name in enumerate(self.sign_class_names):
+            probs[str(name)] = float(prob_tensor[i].item())
+
+        idx = int(torch.argmax(prob_tensor).item())
+        sign_type = str(self.sign_class_names[idx])
+        confidence = float(prob_tensor[idx].item())
+
+        if confidence < self.sign_classifier_conf_threshold:
+            return {
+                "sign_type": "unknown",
+                "sign_name": self.pretty_sign_name("unknown"),
+                "sign_confidence": confidence,
+                "sign_probs": probs,
+                "sign_source": f"classifier_low_conf:{sign_type}:{confidence:.3f}",
+            }
+
+        return {
+            "sign_type": sign_type,
+            "sign_name": self.pretty_sign_name(sign_type),
+            "sign_confidence": confidence,
+            "sign_probs": probs,
+            "sign_source": f"classifier:{sign_type}:{confidence:.3f}",
+        }
+
 
     def build_tl_state_model(self, num_classes):
         model = models.resnet18(weights=None)
@@ -352,6 +557,7 @@ class PerceptionNode(Node):
         label = self.normalize_text(original_label)
 
         sign_classes = {
+            "ada_etrafinda_donunuz",
             "dikkat",
             "dur",
             "duraklamak_park_yasaktir",
@@ -360,12 +566,22 @@ class PerceptionNode(Node):
             "hiz_siniri_30",
             "hiz_siniri_40",
             "hiz_siniri_50",
+            "iki_yonlu_yol",
+            "ileri_mecburi_yon",
+            "ileri_ve_saga_mecburi_yon",
+            "ileri_ve_sola_mecburi_yon",
             "isikli_isaret_cihazi",
             "okul_gecidi",
             "park_etmek_yasaktir",
+            "park_yeri",
             "saga_donulmez",
+            "saga_mecburi_yon",
+            "sagdan_gidiniz",
             "sola_donulmez",
+            "sola_mecburi_yon",
+            "soldan_gidiniz",
             "tasit_giremez",
+            "tunel",
             "yaya_gecidi",
             "yol_calismasi",
             "yol_ver",
@@ -392,12 +608,23 @@ class PerceptionNode(Node):
             "isikli_isaret_cihazi": "Işıklı İşaret Cihazı",
             "okul_gecidi": "Okul Geçidi",
             "park_etmek_yasaktir": "Park Yasak",
+            "park_yeri": "Park Yeri",
             "saga_donulmez": "Sağa Dönülmez",
+            "saga_mecburi_yon": "Sağa Mecburi Yön",
+            "sagdan_gidiniz": "Sağdan Gidiniz",
             "sola_donulmez": "Sola Dönülmez",
+            "sola_mecburi_yon": "Sola Mecburi Yön",
+            "soldan_gidiniz": "Soldan Gidiniz",
             "tasit_giremez": "Taşıt Giremez",
+            "tunel": "Tünel",
             "yaya_gecidi": "Yaya Geçidi",
             "yol_calismasi": "Yol Çalışması",
             "yol_ver": "Yol Ver",
+            "ada_etrafinda_donunuz": "Ada Etrafında Dönünüz",
+            "iki_yonlu_yol": "İki Yönlü Yol",
+            "ileri_mecburi_yon": "İleri Mecburi Yön",
+            "ileri_ve_saga_mecburi_yon": "İleri ve Sağa Mecburi Yön",
+            "ileri_ve_sola_mecburi_yon": "İleri ve Sola Mecburi Yön",
             "unknown": "Bilinmiyor",
         }
 
@@ -1064,13 +1291,6 @@ class PerceptionNode(Node):
         return float(dist / scale)
 
     def resolve_person_motorcycle_conflicts(self, detections):
-        """
-        Aynı fiziksel obje hem person hem motorcycle çıkarsa düzeltir.
-
-        CARLA testinde bazı pedestrian bbox'ları ayrıca motorcycle olarak da geliyor.
-        Eğer motorcycle bbox'u person bbox'u ile güçlü çakışıyorsa,
-        o motorcycle sahte kabul edilip düşürülür.
-        """
 
         if not env_bool("PERSON_MOTOR_CONFLICT_FILTER", True):
             return detections
@@ -1283,7 +1503,6 @@ class PerceptionNode(Node):
 
             y += 25
 
-            # Görüntü üzerinde tüm kırmızı ışıkları işaretle.
             x1i, y1i, x2i, y2i = int(x1), int(y1), int(x2), int(y2)
 
             cv2.rectangle(
@@ -2720,10 +2939,41 @@ class PerceptionNode(Node):
                         det["traffic_light_hsv_reason"] = light_result["hsv_reason"]
 
                     if label == "traffic_sign":
-                        sign_type = self.get_sign_type_from_label(original_label)
+                        # Önce YOLO class isminden sign_type çıkarmayı dene.
+                        # YOLO sadece traffic_sign diyorsa V2 classifier crop üzerinden sınıfı belirler.
+                        sign_type_from_label = self.get_sign_type_from_label(original_label)
+
+                        sign_result = self.classify_traffic_sign_crop(frame, det["bbox"])
+
+                        cls_sign_type = sign_result.get("sign_type", "unknown")
+                        cls_sign_conf = float(sign_result.get("sign_confidence", 0.0))
+
+                        if cls_sign_type != "unknown":
+                            sign_type = cls_sign_type
+                            sign_conf = cls_sign_conf
+                            sign_source = sign_result.get("sign_source", "classifier")
+                        else:
+                            sign_type = sign_type_from_label
+                            sign_conf = conf if sign_type != "unknown" else cls_sign_conf
+                            sign_source = sign_result.get("sign_source", "classifier_unknown")
+
                         det["sign_type"] = sign_type
                         det["sign_name"] = self.pretty_sign_name(sign_type)
-                        det["sign_confidence"] = conf
+                        det["sign_confidence"] = float(sign_conf)
+                        det["sign_probs"] = sign_result.get("sign_probs", {})
+                        det["sign_source"] = sign_source
+
+                        self.get_logger().info(
+                            f"SIGN_CLASSIFIER "
+                            f"yolo_conf={conf:.3f} "
+                            f"original={original_label} "
+                            f"type={det.get('sign_type')} "
+                            f"name={det.get('sign_name')} "
+                            f"sign_conf={det.get('sign_confidence'):.3f} "
+                            f"source={det.get('sign_source')} "
+                            f"bbox={[round(float(v), 1) for v in det['bbox']]}",
+                            throttle_duration_sec=0.3,
+                        )
 
                     detections.append(det)
 

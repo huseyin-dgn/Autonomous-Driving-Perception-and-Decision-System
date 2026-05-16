@@ -14,6 +14,7 @@ setup(
             "share/autonomous_driving/launch",
             [
                 "launch/teknofest_carla_full.launch.py",
+                "launch/teknofest_sign_static_test.launch.py",
             ],
         ),
     ],
@@ -45,6 +46,7 @@ setup(
             "traffic_light_decision_gate_node = teknofest_sim.traffic_light_decision_gate_node:main",
             "teknofest_scenario_node = teknofest_sim.teknofest_scenario_node:main",
             "teknofest_evaluator_node = teknofest_sim.teknofest_evaluator_node:main",
+            "teknofest_sign_static_test_node = teknofest_sim.teknofest_sign_static_test_node:main",
         ],
     },
 )
