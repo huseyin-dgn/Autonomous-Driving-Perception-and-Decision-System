@@ -33,35 +33,13 @@ class TeknofestScenarioNode(Node):
         self.declare_parameter("traffic_sign_markers_enabled", True)
         self.declare_parameter("traffic_sign_marker_count", 8)
         self.declare_parameter("traffic_sign_marker_mode", "camera_view")
-        self.declare_parameter("traffic_sign_marker_first_distance", 10.0)
-        self.declare_parameter("traffic_sign_marker_distance_step", 5.0)
-        self.declare_parameter("traffic_sign_marker_side_offset", 2.2)
-        self.declare_parameter("traffic_sign_marker_z", 1.10)
+        self.declare_parameter("traffic_sign_marker_first_distance", 7.0)
+        self.declare_parameter("traffic_sign_marker_distance_step", 3.0)
+        self.declare_parameter("traffic_sign_marker_side_offset", 1.3)
+        self.declare_parameter("traffic_sign_marker_z", 1.45)
         self.declare_parameter("traffic_sign_marker_debug_draw", True)
-        self.declare_parameter(
-            "traffic_sign_marker_blueprints",
-            ",".join([
-                "static.prop.trafficwarning",
-                "static.prop.streetsign04",
-                "static.prop.streetsign01",
-                "static.prop.streetsign",
-                "static.prop.busstoplb",
-                "static.prop.busstop",
-                "static.prop.trafficcone01",
-                "static.prop.trafficcone02",
-            ]),
-        )
-
-        # Ana CARLA senaryosu için görünür trafik levhası/işaret markerları.
-        # CARLA standart assetlerinde Türkçe özel levhalar garanti değil.
-        # Bu yüzden mevcut static.prop tabelalar kullanılıyor.
-        # Perception node bunları /adas/camera/front/image_raw üzerinden görecek.
-        self.declare_parameter("traffic_sign_markers_enabled", True)
-        self.declare_parameter("traffic_sign_marker_count", 8)
         self.declare_parameter("traffic_sign_marker_start_index", 7)
         self.declare_parameter("traffic_sign_marker_stride", 6)
-        self.declare_parameter("traffic_sign_marker_side_offset", 3.0)
-        self.declare_parameter("traffic_sign_marker_z", 0.65)
         self.declare_parameter("traffic_sign_marker_yaw_offset", -90.0)
         self.declare_parameter(
             "traffic_sign_marker_blueprints",
@@ -118,30 +96,14 @@ class TeknofestScenarioNode(Node):
         self.traffic_sign_marker_blueprints = str(
             self.get_parameter("traffic_sign_marker_blueprints").value
         )
-
-        self.traffic_sign_markers_enabled = bool(
-            self.get_parameter("traffic_sign_markers_enabled").value
-        )
-        self.traffic_sign_marker_count = int(
-            self.get_parameter("traffic_sign_marker_count").value
-        )
         self.traffic_sign_marker_start_index = int(
             self.get_parameter("traffic_sign_marker_start_index").value
         )
         self.traffic_sign_marker_stride = int(
             self.get_parameter("traffic_sign_marker_stride").value
         )
-        self.traffic_sign_marker_side_offset = float(
-            self.get_parameter("traffic_sign_marker_side_offset").value
-        )
-        self.traffic_sign_marker_z = float(
-            self.get_parameter("traffic_sign_marker_z").value
-        )
         self.traffic_sign_marker_yaw_offset = float(
             self.get_parameter("traffic_sign_marker_yaw_offset").value
-        )
-        self.traffic_sign_marker_blueprints = str(
-            self.get_parameter("traffic_sign_marker_blueprints").value
         )
 
         self.carla = load_carla(self.carla_root)
@@ -153,7 +115,6 @@ class TeknofestScenarioNode(Node):
         self.created_actors = []
         self.traffic_sign_marker_actors = []
         self.traffic_sign_marker_infos = []
-        self.traffic_sign_marker_actors = []
 
         self.ego = self.wait_for_ego()
         self.tm = self.client.get_trafficmanager(self.traffic_manager_port)

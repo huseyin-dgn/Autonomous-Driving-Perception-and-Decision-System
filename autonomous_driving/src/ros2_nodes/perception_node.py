@@ -831,7 +831,7 @@ class PerceptionNode(Node):
 
             gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
 
-            # Sarı gövde/border etkisini azaltmak için iç bölgeye odaklan.
+
             mx = max(1, int(w * 0.18))
             my = max(1, int(h * 0.04))
             inner = gray[my:h - my, mx:w - mx]
@@ -841,12 +841,11 @@ class PerceptionNode(Node):
 
             ih, iw = inner.shape[:2]
 
-            # En parlak pikselleri al. CARLA'da aktif lens renkli değil, beyaz/sarı parlak çıkıyor.
+
             blur = cv2.GaussianBlur(inner, (3, 3), 0)
             thresh_val = max(120, int(np.percentile(blur, 97)))
             bright = (blur >= thresh_val).astype("uint8")
 
-            # Çok az parlaklık varsa state çıkarma.
             bright_count = int(bright.sum())
             if bright_count < 5:
                 return {
@@ -876,7 +875,7 @@ class PerceptionNode(Node):
             ordered = sorted(scores.values(), reverse=True)
             second = ordered[1] if len(ordered) > 1 else 0
 
-            # Parlaklık tek bölgede baskın değilse unknown.
+
             if best_score < 5:
                 return {
                     "state": "unknown",
@@ -1029,8 +1028,7 @@ class PerceptionNode(Node):
                 "reason": "classifier_empty_crop",
             }
 
-        # DEBUG: Traffic light state classifier'a giden gerçek crop'u kaydet.
-        # Bu crop, modelin red/yellow/green/unknown tahmini yaptığı görüntüdür.
+
         if env_bool("SAVE_TL_STATE_CROPS", False):
             try:
                 self.tl_crop_save_count = getattr(self, "tl_crop_save_count", 0) + 1
@@ -2878,8 +2876,6 @@ class PerceptionNode(Node):
                     original_label = self.get_yolo_name(cls_id)
                     label = self.normalize_label(original_label)
 
-                    # Motorcycle sınıfı proje kapsamından çıkarıldı.
-                    # YOLO class_id=0 üretse bile perception bunu hiç kullanmayacak.
                     if label == "__drop__":
                         continue
 
@@ -2939,8 +2935,6 @@ class PerceptionNode(Node):
                         det["traffic_light_hsv_reason"] = light_result["hsv_reason"]
 
                     if label == "traffic_sign":
-                        # Önce YOLO class isminden sign_type çıkarmayı dene.
-                        # YOLO sadece traffic_sign diyorsa V2 classifier crop üzerinden sınıfı belirler.
                         sign_type_from_label = self.get_sign_type_from_label(original_label)
 
                         sign_result = self.classify_traffic_sign_crop(frame, det["bbox"])
@@ -3015,10 +3009,7 @@ class PerceptionNode(Node):
 
         detections = self.resolve_person_motorcycle_conflicts(detections)
 
-        # SCREEN DEBUG:
-        # Modelin kırmızı gördüğü bütün traffic_light kutularını,
-        # lens/active/keep-only filtreleri silmeden ÖNCE kaydet.
-        # Böylece perception ekranında "model ne gördü" ayrı izlenir.
+
         self.screen_red_lights = self.collect_red_traffic_lights_for_screen(
             [dict(d) for d in detections],
             frame_w,
@@ -3050,9 +3041,6 @@ class PerceptionNode(Node):
                     f"FINAL_TL_FRONT_LENS_GATE before={_tl_before} after={_tl_after} reasons={_drop_reasons[:4]}",
                     throttle_duration_sec=0.5,
                 )
-
-        # screen_red_lights filtrelerden ÖNCE dolduruluyor.
-        # Burada tekrar hesaplama yapma; yoksa filtrelerin sildiği ışıklar ekranda 0 görünür.
         if not hasattr(self, "screen_red_lights"):
             self.screen_red_lights = []
 
@@ -3083,7 +3071,7 @@ class PerceptionNode(Node):
             active_light_state_probs = active_light.get("traffic_light_state_probs", active_light.get("tl_state_probs", None))
             active_light_bbox = active_light.get("bbox", None)
 
-            keep_only_active = False  # TEST: valid traffic lights were being dropped by active-light filter
+            keep_only_active = False  
 
             if False and keep_only_active:
                 detections = [
@@ -3121,7 +3109,7 @@ class PerceptionNode(Node):
             active_light_color_scores = active_light.get("traffic_light_color_scores", None)
             active_light_color_reason = active_light.get("traffic_light_color_reason", None)
 
-            keep_only_active = False  # TEST: valid traffic lights were being dropped by active-light filter
+            keep_only_active = False  
 
             if False and keep_only_active:
                 detections = [
@@ -3165,10 +3153,7 @@ class PerceptionNode(Node):
                 if d.get("label") != "traffic_light"
             ]
 
-        # FINAL FIX:
-        # CARLA Town map içinde aynı anda çok fazla trafik ışığı var.
-        # YOLO bunların arka/yan yüzlerini de traffic_light olarak görüyor.
-        # ADAS karar sistemi için sadece seçilen active traffic light kullanılmalı.
+
         if env_bool("TL_KEEP_ONLY_ACTIVE", True):
             before_tl = sum(1 for d in detections if d.get("label") == "traffic_light")
 

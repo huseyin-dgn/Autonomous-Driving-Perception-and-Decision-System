@@ -291,12 +291,14 @@ class CarlaSensorBridgeNode(Node):
         ]
         return msg
 
+
     def carla_rgb_to_ros_image(self, image, frame_id: str) -> Image:
         arr = np.frombuffer(image.raw_data, dtype=np.uint8)
         arr = arr.reshape((image.height, image.width, 4))
 
         # CARLA raw is BGRA. Convert to RGB.
         rgb = arr[:, :, :3][:, :, ::-1].copy()
+
 
         msg = Image()
         msg.header.stamp = self.stamp_now()
