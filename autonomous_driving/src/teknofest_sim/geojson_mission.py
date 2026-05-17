@@ -86,20 +86,9 @@ def load_mission_geojson(path: str, round_name: str = "round_3") -> MissionSpec:
 
 
 def haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    radius = 6371000.0
-
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dp = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-
-    a = (
-        math.sin(dp / 2.0) ** 2
-        + math.cos(p1) * math.cos(p2) * math.sin(dl / 2.0) ** 2
-    )
-
-    return 2.0 * radius * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
-
+    dx = lon2 - lon1
+    dy = lat2 - lat1
+    return math.sqrt(dx * dx + dy * dy) * 100000.0
 
 def mission_to_dict(mission: MissionSpec) -> dict:
     def p2d(p: MissionPoint):

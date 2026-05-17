@@ -201,7 +201,7 @@ class LaneAssistNode(Node):
             expected_width = w * 0.48
             lane_center_x = left_bottom + expected_width / 2.0
             lane_detected = True
-            confidence = 0.38
+            confidence = 0.50
             reason = "left_only_low_conf"
 
         elif right_fit is not None:
@@ -209,7 +209,7 @@ class LaneAssistNode(Node):
             expected_width = w * 0.48
             lane_center_x = right_bottom - expected_width / 2.0
             lane_detected = True
-            confidence = 0.38
+            confidence = 0.50
             reason = "right_only_low_conf"
 
         if lane_detected and lane_center_x is not None:
@@ -218,6 +218,7 @@ class LaneAssistNode(Node):
             # Pozitif offset: şerit merkezi görüntüde sağda => araç sola kayık => sağa kır.
             offset_px = lane_center_x - image_center_x
             offset_norm = offset_px / max(w / 2.0, 1.0)
+            offset_norm = self.clamp(offset_norm, -0.35, 0.35)
 
             lane_steer = self.clamp(
                 self.lane_steer_gain * offset_norm,
@@ -234,10 +235,14 @@ class LaneAssistNode(Node):
             self.prev_lane_steer = lane_steer
         else:
             offset_px = None
-            offset_norm = 0.0
-            lane_steer = 0.0
-            self.prev_offset = None
-            self.prev_lane_steer = None
+
+            # Şerit kısa süre kaybolursa eski EMA bilgisini hemen silme.
+            if self.prev_offset is not None:
+                offset_norm = self.prev_offset * 0.92
+                lane_steer = self.prev_lane_steer * 0.92
+            else:
+                offset_norm = 0.0
+                lane_steer = 0.0
 
         debug = {
             "roi_y0": roi_y0,
