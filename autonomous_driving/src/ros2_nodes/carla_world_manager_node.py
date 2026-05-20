@@ -67,6 +67,7 @@ class CarlaWorldManagerNode(Node):
         self.client.set_timeout(self.timeout)
 
         self.world = self.client.get_world()
+        self.cleanup_previous_runtime_actors()
 
         if self.town:
             current_map = self.world.get_map().name
@@ -185,6 +186,70 @@ class CarlaWorldManagerNode(Node):
             except Exception:
                 pass
         super().destroy_node()
+
+
+
+    def cleanup_previous_runtime_actors(self):
+        patterns = [
+            "vehicle.*",
+            "sensor.*",
+            "walker.pedestrian.*",
+            "controller.ai.walker",
+            "static.prop.teknofest_sign*",
+            "static.prop.streetsign*",
+        ]
+
+        actors_to_destroy = []
+
+        for pattern in patterns:
+            try:
+                actors = list(self.world.get_actors().filter(pattern))
+                actors_to_destroy.extend(actors)
+            except Exception as exc:
+                self.get_logger().warn(f"Runtime cleanup pattern failed: {pattern} | {exc}")
+
+        unique = {}
+        for actor in actors_to_destroy:
+            unique[actor.id] = actor
+
+        actors_to_destroy = list(unique.values())
+
+        if not actors_to_destroy:
+            self.get_logger().info("Runtime cleanup: temizlenecek eski actor yok.")
+            return
+
+        self.get_logger().warn(
+            f"Runtime cleanup: {len(actors_to_destroy)} eski actor silinecek."
+        )
+
+        commands = [
+            carla.command.DestroyActor(actor.id)
+            for actor in actors_to_destroy
+        ]
+
+        try:
+            responses = self.client.apply_batch_sync(commands, True)
+        except Exception as exc:
+            self.get_logger().error(f"Runtime cleanup batch failed: {exc}")
+            return
+
+        failed = 0
+        for actor, response in zip(actors_to_destroy, responses):
+            if response.error:
+                failed += 1
+                self.get_logger().warn(
+                    f"Runtime cleanup failed id={actor.id} "
+                    f"type={actor.type_id}: {response.error}"
+                )
+
+        self.get_logger().info(
+            f"Runtime cleanup finished. success={len(actors_to_destroy) - failed}, failed={failed}"
+        )
+
+        try:
+            self.world.tick()
+        except Exception:
+            pass
 
 
 def main(args=None):

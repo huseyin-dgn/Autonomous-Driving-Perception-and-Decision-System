@@ -24,7 +24,6 @@ setup(
     maintainer_email="ilker.akbal4822@gop.edu.tr",
     description="TEKNOFEST Robotaksi CARLA simulation, perception, mission, decision and control package",
     license="MIT",
-    tests_require=["pytest"],
     entry_points={
         "console_scripts": [
             "camera_node = ros2_nodes.camera_node:main",
@@ -47,6 +46,8 @@ setup(
             "teknofest_scenario_node = teknofest_sim.teknofest_scenario_node:main",
             "teknofest_evaluator_node = teknofest_sim.teknofest_evaluator_node:main",
             "teknofest_sign_static_test_node = teknofest_sim.teknofest_sign_static_test_node:main",
+            "teknofest_sign_overlay_node = teknofest_sim.teknofest_sign_overlay_node:main",
+            "teknofest_spectator_follow_node = teknofest_sim.teknofest_spectator_follow_node:main",
         ],
     },
 )
