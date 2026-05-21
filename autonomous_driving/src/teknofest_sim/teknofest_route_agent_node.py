@@ -361,6 +361,30 @@ class TeknofestRouteAgentNode(Node):
         )
 
     def mission_geo_to_carla_location_near_ego(self, target):
+        """
+        Town03 simülasyonunda mission dosyamız CARLA local x/y kullanıyor.
+        Eski kod target lat/lon bilgisini CARLA geolocation sanıp dönüşüm yapıyordu.
+        Bu da 10 milyon metre gibi saçma mesafelere ve yanlış BasicAgent hedefine yol açıyordu.
+
+        Eğer target içinde carla_x/carla_y varsa direkt local CARLA Location döndür.
+        Yoksa legacy gerçek GPS davranışına geri düş.
+        """
+        try:
+            if target.get("carla_x") is not None and target.get("carla_y") is not None:
+                x = float(target.get("carla_x"))
+                y = float(target.get("carla_y"))
+                z = target.get("carla_z", None)
+
+                if z is None:
+                    ego_z = self.ego.get_location().z
+                    z = ego_z
+                else:
+                    z = float(z)
+
+                return self.carla.Location(x=x, y=y, z=z + 0.2)
+        except Exception as exc:
+            self.get_logger().warning(f"carla_x/carla_y target parse hatası: {exc}")
+
         ego_loc = self.ego.get_location()
 
         base_geo = self.map.transform_to_geolocation(ego_loc)
@@ -399,6 +423,7 @@ class TeknofestRouteAgentNode(Node):
         dy = self.clamp(dy, -500.0, 500.0)
 
         return self.carla.Location(x=ego_loc.x + dx, y=ego_loc.y + dy, z=ego_loc.z)
+
 
     def get_turn_direction_to_target(self, target):
         """

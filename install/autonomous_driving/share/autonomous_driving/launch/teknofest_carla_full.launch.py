@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, SetEnvironmentVariable, TimerAction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch.conditions import IfCondition
 
 
 def generate_launch_description():
@@ -87,19 +88,22 @@ def generate_launch_description():
             executable="carla_world_manager_node",
             name="carla_world_manager_node",
             output="screen",
-            parameters=[{
-                "carla_root": carla_root,
-                "host": host,
-                "port": port,
-                "timeout": 120.0,
-                "town": town,
-                "ego_role_name": "ego_vehicle",
-                "ego_blueprint": "vehicle.tesla.model3",
-                "spawn_index": 0,
-                "destroy_on_shutdown": True,
-                "set_spectator": True,
-                "enable_sync_mode": False,
-            }],
+                                parameters=[{
+                        "mission_geojson": mission_geojson,
+                        "round_name": round_name,
+
+                        "carla_root": carla_root,
+                        "host": host,
+                        "port": port,
+                        "timeout": 120.0,
+                        "ego_role_name": "ego_vehicle",
+                        "use_carla_xy_distance": True,
+
+                        "point_pass_tolerance_m": 6.0,
+                        "passenger_stop_min_s": 5.0,
+                        "passenger_stop_max_s": 20.0,
+                        "park_time_limit_s": 180.0,
+                    }],
         ),
 
         TimerAction(
@@ -305,7 +309,7 @@ def generate_launch_description():
                     name="traffic_light_decision_gate_node",
                     output="screen",
                     parameters=[{
-                        "enabled": True,
+                        "enabled": False,
                         "detections_topic": "/adas/perception/detections_json",
                         "base_decision_topic": "/adas/decision",
                         "safe_decision_topic": "/adas/decision_safe",
@@ -340,7 +344,7 @@ def generate_launch_description():
                     parameters=[{
                         "mission_geojson": mission_geojson,
                         "round_name": round_name,
-                        "point_pass_tolerance_m": 3.0,
+                        "point_pass_tolerance_m": 6.0,
                         "passenger_stop_min_s": 5.0,
                         "passenger_stop_max_s": 20.0,
                         "park_time_limit_s": 180.0,
@@ -378,7 +382,7 @@ def generate_launch_description():
                         "max_steer": 0.34,
                         "mission_stop_override": True,
                         "ignore_decision_for_mission_test": False,
-                        "lane_assist_enabled": True,
+                        "lane_assist_enabled": False,
                         "lane_topic": "/adas/lane/assist",
                         "lane_min_confidence": 0.45,
                         "lane_fresh_timeout_s": 1.20,
@@ -429,17 +433,46 @@ def generate_launch_description():
             executable="teknofest_route_signs_node",
             name="teknofest_route_signs_node",
             output="screen",
+            condition=IfCondition("false"),
             parameters=[
                 {
+                    "carla_root": carla_root,
                     "host": host,
                     "port": port,
                     "mission_geojson": mission_geojson,
-                    "enabled": True,
+
+                    "enabled": False,
                     "clear_existing_signs": True,
-                    "roadside_extra_m": 3.8,
-                    "z_offset_m": 0.08,
-                    "yaw_offset_deg": -90.0,
-                    "sign_plan": "35:hiz_siniri_20:R,85:yaya_gecidi:R,145:hiz_siniri_30:R,210:park_etmek_yasaktir:R,285:yol_ver:R,355:dur:R",
+                    "destroy_on_shutdown": True,
+
+                    # Town03 mission noktalarından gerçek CARLA rotası çıkarılır.
+                    "route_sampling_resolution_m": 2.0,
+
+                    # Artık şerit merkezinden kör offset atmıyoruz.
+                    # Node önce aynı yöndeki en dış şeridi bulacak,
+                    # sonra şerit kenarından kaldırıma çıkaracak.
+                    "curb_extra_m": 0.85,
+
+                    # Zemin oturtma.
+                    "z_offset_m": 0.05,
+                    "spawn_lift_m": 0.20,
+
+                    # Tabelalar üst üste binmesin.
+                    "min_sign_spacing_m": 18.0,
+
+                    # Blender FBX tabela yüz yönü düzeltmesi.
+                    "mesh_yaw_offset_deg": -90.0,
+
+                    "auto_turn_signs_enabled": True,
+                    "auto_base_signs_enabled": True,
+
+                    # Boşsa otomatik rota bazlı plan kullanılır.
+                    "sign_plan": "",
+
+                    # Yeşil debug yazı/çizgi görüntüyü bozduğu için kapalı.
+                    "debug_draw": False,
+
+                    "status_topic": "/adas/teknofest/route_signs_status",
                 }
             ],
         ),

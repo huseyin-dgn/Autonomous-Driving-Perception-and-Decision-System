@@ -1,4 +1,5 @@
 import json
+import math
 import time
 from dataclasses import asdict
 
@@ -7,6 +8,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import String
 
+from teknofest_sim.carla_loader import load_carla
 from teknofest_sim.geojson_mission import (
     haversine_meters,
     load_mission_geojson,
@@ -29,6 +31,14 @@ class TeknofestMissionNode(Node):
         self.declare_parameter("passenger_stop_max_s", 20.0)
         self.declare_parameter("park_time_limit_s", 180.0)
 
+        # Town03 CARLA local coordinate fix.
+        self.declare_parameter("use_carla_xy_distance", True)
+        self.declare_parameter("carla_root", "/home/ilker/simulators/CARLA_0.9.15_SOURCE")
+        self.declare_parameter("host", "127.0.0.1")
+        self.declare_parameter("port", 2000)
+        self.declare_parameter("timeout", 120.0)
+        self.declare_parameter("ego_role_name", "ego_vehicle")
+
         self.mission_geojson = self.get_parameter("mission_geojson").value
         self.round_name = self.get_parameter("round_name").value
 
@@ -41,10 +51,26 @@ class TeknofestMissionNode(Node):
         self.passenger_stop_max_s = float(self.get_parameter("passenger_stop_max_s").value)
         self.park_time_limit_s = float(self.get_parameter("park_time_limit_s").value)
 
+        self.use_carla_xy_distance = bool(self.get_parameter("use_carla_xy_distance").value)
+        self.carla_root = self.get_parameter("carla_root").value
+        self.host = self.get_parameter("host").value
+        self.port = int(self.get_parameter("port").value)
+        self.timeout = float(self.get_parameter("timeout").value)
+        self.ego_role_name = self.get_parameter("ego_role_name").value
+
         self.mission = load_mission_geojson(self.mission_geojson, self.round_name)
 
         self.current_lat = None
         self.current_lon = None
+
+        self.carla = None
+        self.client = None
+        self.world = None
+        self.ego = None
+        self.last_ego_lookup_s = 0.0
+
+        if self.use_carla_xy_distance:
+            self.connect_to_carla()
 
         self.stage = "GO_TO_TASK"
         self.route_index = 0
@@ -74,12 +100,72 @@ class TeknofestMissionNode(Node):
                         "name": p.name,
                         "kind": self.point_kind(p),
                         "nokta_id": p.nokta_id,
+                        "carla_x": p.carla_x,
+                        "carla_y": p.carla_y,
                     }
                     for i, p in enumerate(self.route_points)
                 ],
                 ensure_ascii=False,
             )
         )
+
+    def connect_to_carla(self):
+        try:
+            self.carla = load_carla(self.carla_root)
+            self.client = self.carla.Client(self.host, self.port)
+            self.client.set_timeout(self.timeout)
+            self.world = self.client.get_world()
+            self.get_logger().info(
+                f"Mission node CARLA XY distance aktif: {self.host}:{self.port} map={self.world.get_map().name}"
+            )
+        except Exception as exc:
+            self.get_logger().warning(
+                f"Mission node CARLA bağlantısı kurulamadı, GNSS fallback kullanılacak: {exc}"
+            )
+            self.use_carla_xy_distance = False
+
+    def find_ego(self):
+        if self.world is None:
+            return None
+
+        now = time.time()
+
+        if self.ego is not None:
+            try:
+                if self.ego.is_alive:
+                    return self.ego
+            except Exception:
+                self.ego = None
+
+        if now - self.last_ego_lookup_s < 1.0:
+            return self.ego
+
+        self.last_ego_lookup_s = now
+
+        try:
+            vehicles = self.world.get_actors().filter("vehicle.*")
+
+            for vehicle in vehicles:
+                if vehicle.attributes.get("role_name", "") == self.ego_role_name:
+                    self.ego = vehicle
+                    self.get_logger().info(f"Mission node ego bulundu: id={vehicle.id}")
+                    return self.ego
+
+        except Exception as exc:
+            self.get_logger().warning(f"Mission node ego arama hatası: {exc}")
+
+        return None
+
+    def current_carla_location(self):
+        ego = self.find_ego()
+
+        if ego is None:
+            return None
+
+        try:
+            return ego.get_location()
+        except Exception:
+            return None
 
     def publish_event(self, event_type: str, payload: dict):
         msg = String()
@@ -97,6 +183,13 @@ class TeknofestMissionNode(Node):
         self.current_lon = float(msg.longitude)
 
     def point_kind(self, point):
+        explicit_kind = str(getattr(point, "kind", "") or "").lower()
+
+        if explicit_kind in {"start", "via", "task", "park"}:
+            if explicit_kind == "start":
+                return "via"
+            return explicit_kind
+
         name = str(point.name or "").lower()
 
         if name == "park_giris" or name.startswith("park"):
@@ -115,7 +208,6 @@ class TeknofestMissionNode(Node):
 
         points = sorted(points, key=lambda p: int(p.nokta_id))
 
-        # Park her zaman en sonda olsun.
         non_park = [p for p in points if self.point_kind(p) != "park"]
         park = [p for p in points if self.point_kind(p) == "park"]
 
@@ -146,10 +238,21 @@ class TeknofestMissionNode(Node):
         return self.current_route_point()
 
     def distance_to_target(self):
+        target = self.target_point()
+
+        if (
+            self.use_carla_xy_distance
+            and target.carla_x is not None
+            and target.carla_y is not None
+        ):
+            loc = self.current_carla_location()
+
+            if loc is not None:
+                return math.hypot(float(loc.x) - float(target.carla_x), float(loc.y) - float(target.carla_y))
+
         if self.current_lat is None or self.current_lon is None:
             return None
 
-        target = self.target_point()
         return haversine_meters(
             self.current_lat,
             self.current_lon,
