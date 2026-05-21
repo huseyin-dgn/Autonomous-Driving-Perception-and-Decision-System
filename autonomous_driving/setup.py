@@ -48,6 +48,7 @@ setup(
             "teknofest_sign_static_test_node = teknofest_sim.teknofest_sign_static_test_node:main",
             "teknofest_sign_overlay_node = teknofest_sim.teknofest_sign_overlay_node:main",
             "teknofest_spectator_follow_node = teknofest_sim.teknofest_spectator_follow_node:main",
+            "teknofest_route_signs_node = teknofest_sim.teknofest_route_signs_node:main",
         ],
     },
 )
