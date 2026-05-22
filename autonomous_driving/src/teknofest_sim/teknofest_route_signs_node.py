@@ -35,6 +35,12 @@ class SignPlanItem:
     distance_m: float
     side: str
     reason: str
+    route_x: object = None
+    route_y: object = None
+    route_z: object = None
+    route_yaw: object = None
+    route_index: object = None
+    source_event: str = ""
 
 
 class TeknofestRouteSignsNode(Node):
@@ -70,6 +76,7 @@ class TeknofestRouteSignsNode(Node):
         # Manuel örnek:
         # "35:hiz_siniri_30:R,85:yaya_gecidi:R,145:yol_ver:R"
         self.declare_parameter("sign_plan", "")
+        self.declare_parameter("sign_plan_file", "")
 
         self.declare_parameter("debug_draw", False)
         self.declare_parameter("status_topic", "/adas/teknofest/route_signs_status")
@@ -95,6 +102,7 @@ class TeknofestRouteSignsNode(Node):
         self.auto_turn_signs_enabled = bool(self.get_parameter("auto_turn_signs_enabled").value)
         self.auto_base_signs_enabled = bool(self.get_parameter("auto_base_signs_enabled").value)
         self.sign_plan_text = str(self.get_parameter("sign_plan").value)
+        self.sign_plan_file = str(self.get_parameter("sign_plan_file").value).strip()
 
         self.debug_draw = bool(self.get_parameter("debug_draw").value)
         self.status_topic = str(self.get_parameter("status_topic").value)
@@ -327,6 +335,75 @@ class TeknofestRouteSignsNode(Node):
 
         return items
 
+    def parse_plan_file(self):
+        if not self.sign_plan_file:
+            return []
+
+        path = os.path.expanduser(self.sign_plan_file)
+
+        if not os.path.exists(path):
+            raise RuntimeError(f"sign_plan_file bulunamadı: {path}")
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        raw_items = data.get("signs", data) if isinstance(data, dict) else data
+
+        if not isinstance(raw_items, list):
+            raise RuntimeError("sign_plan_file formatı liste veya {'signs': [...]} olmalı.")
+
+        items = []
+
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+
+            sign_name = self.norm_sign(raw.get("sign", raw.get("sign_name", "")))
+            if not sign_name:
+                continue
+
+            try:
+                distance_m = float(raw["distance_m"])
+            except Exception as exc:
+                raise RuntimeError(f"sign_plan_file içinde distance_m hatalı: {raw}") from exc
+
+            items.append(
+                SignPlanItem(
+                    sign_name=sign_name,
+                    distance_m=distance_m,
+                    side=self.norm_side(raw.get("side", "R")),
+                    reason=str(raw.get("reason", "plan_file")),
+                    route_x=raw.get("route_x"),
+                    route_y=raw.get("route_y"),
+                    route_z=raw.get("route_z", raw.get("carla_z", 0.2)),
+                    route_yaw=raw.get("route_yaw"),
+                    route_index=raw.get("route_index"),
+                    source_event=str(raw.get("source_event", "")),
+                )
+            )
+
+        items = sorted(items, key=lambda x: x.distance_m)
+
+        self.get_logger().info(
+            "ROUTE_SIGN_FILE_PLAN "
+            + json.dumps(
+                [
+                    {
+                        "sign": x.sign_name,
+                        "distance_m": round(x.distance_m, 2),
+                        "side": x.side,
+                        "route_x": x.route_x,
+                        "route_y": x.route_y,
+                        "reason": x.reason,
+                    }
+                    for x in items
+                ],
+                ensure_ascii=False,
+            )
+        )
+
+        return items
+
     def add_plan_item(self, items, sign_name, distance_m, side, reason, route_len):
         d = max(8.0, min(float(distance_m), max(8.0, route_len - 8.0)))
 
@@ -526,7 +603,7 @@ class TeknofestRouteSignsNode(Node):
         yaw = math.degrees(math.atan2(dy, dx))
         return yaw + self.mesh_yaw_offset_deg
 
-    def make_transform(self, sample, side):
+    def make_transform(self, sample, side, extra_curb_m=0.0):
         side = self.norm_side(side)
 
         original_wp = sample.waypoint
@@ -544,7 +621,7 @@ class TeknofestRouteSignsNode(Node):
             lane_width = 3.5
 
         # Şerit merkezinden değil, en dış şerit kenarından kaldırıma çıkıyoruz.
-        lateral_m = (lane_width * 0.5) + self.curb_extra_m
+        lateral_m = (lane_width * 0.5) + self.curb_extra_m + float(extra_curb_m)
 
         sign_loc = self.carla.Location(
             x=outer_loc.x + right.x * lateral_m * side_mul,
@@ -616,6 +693,85 @@ class TeknofestRouteSignsNode(Node):
         except Exception as exc:
             self.get_logger().warning(f"DEBUG_DRAW_FAILED: {exc}")
 
+    def sample_for_plan_item(self, item, route_samples):
+        if item.route_x is None or item.route_y is None:
+            return self.sample_at_distance(route_samples, item.distance_m)
+
+        try:
+            loc = self.carla.Location(
+                x=float(item.route_x),
+                y=float(item.route_y),
+                z=float(item.route_z or 0.2),
+            )
+
+            wp = self.map.get_waypoint(
+                loc,
+                project_to_road=True,
+                lane_type=self.carla.LaneType.Driving,
+            )
+
+            if wp is None:
+                self.get_logger().warning(
+                    f"PLAN_ANCHOR_WAYPOINT_NOT_FOUND sign={item.sign_name} "
+                    f"x={item.route_x} y={item.route_y}; distance fallback kullanılacak."
+                )
+                return self.sample_at_distance(route_samples, item.distance_m)
+
+            closest = min(
+                route_samples,
+                key=lambda s: math.hypot(
+                    s.waypoint.transform.location.x - loc.x,
+                    s.waypoint.transform.location.y - loc.y,
+                ),
+            )
+
+            return RouteSample(wp, closest.road_option, float(item.distance_m))
+
+        except Exception as exc:
+            self.get_logger().warning(
+                f"PLAN_ANCHOR_PARSE_FAILED sign={item.sign_name}: {exc}; distance fallback kullanılacak."
+            )
+            return self.sample_at_distance(route_samples, item.distance_m)
+
+    def lateral_distance_from_wp(self, wp, loc):
+        wp_loc = wp.transform.location
+        right = wp.transform.get_right_vector()
+
+        dx = float(loc.x - wp_loc.x)
+        dy = float(loc.y - wp_loc.y)
+
+        return dx * float(right.x) + dy * float(right.y)
+
+    def is_on_driving_lane_exact(self, loc):
+        try:
+            wp = self.map.get_waypoint(
+                loc,
+                project_to_road=False,
+                lane_type=self.carla.LaneType.Driving,
+            )
+            return wp is not None
+        except Exception:
+            return False
+
+    def validate_sign_transform(self, sample, transform):
+        original_wp = sample.waypoint
+
+        if bool(getattr(original_wp, "is_junction", False)):
+            return False, "anchor_inside_junction"
+
+        lateral = abs(self.lateral_distance_from_wp(original_wp, transform.location))
+
+        if lateral < 2.20:
+            return False, f"too_close_to_route_lateral_{lateral:.2f}m"
+
+        if lateral > 7.50:
+            return False, f"too_far_from_route_lateral_{lateral:.2f}m"
+
+        if self.is_on_driving_lane_exact(transform.location):
+            return False, "candidate_on_driving_lane"
+
+        return True, "ok"
+
     def spawn_sign(self, item, route_samples):
         bp = self.blueprint_for_sign(item.sign_name)
 
@@ -631,89 +787,111 @@ class TeknofestRouteSignsNode(Node):
             self.get_logger().warning(f"ROUTE_SIGN_BP_NOT_FOUND sign={item.sign_name}")
             return None
 
-        sample = self.sample_at_distance(route_samples, item.distance_m)
-        base_transform, ground_z, placement_debug = self.make_transform(sample, item.side)
+        base_sample = self.sample_for_plan_item(item, route_samples)
 
-        actor = None
-        used_extra = 0.0
+        rejected = []
 
-        # Duvar/ağaç/lamba çakışması varsa küçük düzeltmeler dene.
-        # Büyük oynamıyoruz; tabela tekrar yola girmesin.
-        try_offsets = [0.0, -0.35, 0.35, -0.70, 0.70, -1.05]
+        # Final kullanım kuralı:
+        # Negatif offset yok. Tabela çakışırsa tekrar yola değil, kaldırıma/dışarı kaçar.
+        extra_curb_candidates = [0.0, 0.35, 0.70, 1.05, 1.40, 1.75, 2.10]
 
-        for extra in try_offsets:
-            transform = base_transform
+        # Plan L diyorsa önce L denenir, olmazsa R denenir.
+        # Plan R diyorsa sadece R; çünkü yarış rota tabelaları öncelikle sağ tarafta olmalı.
+        side_candidates = ["L", "R"] if self.norm_side(item.side) == "L" else ["R"]
 
-            if abs(extra) > 0.001:
-                right = sample.waypoint.transform.get_right_vector()
-                side_mul = 1.0 if self.norm_side(item.side) == "R" else -1.0
-
-                transform = self.carla.Transform(
-                    self.carla.Location(
-                        x=base_transform.location.x + right.x * extra * side_mul,
-                        y=base_transform.location.y + right.y * extra * side_mul,
-                        z=base_transform.location.z,
-                    ),
-                    base_transform.rotation,
+        for side in side_candidates:
+            for extra_curb_m in extra_curb_candidates:
+                transform, ground_z, placement_debug = self.make_transform(
+                    base_sample,
+                    side,
+                    extra_curb_m=extra_curb_m,
                 )
 
-            actor = self.world.try_spawn_actor(bp, transform)
-            if actor is not None:
-                used_extra = extra
-                break
+                ok, reject_reason = self.validate_sign_transform(base_sample, transform)
 
-        if actor is None:
-            report = {
-                "sign": item.sign_name,
-                "distance_m": round(item.distance_m, 2),
-                "side": item.side,
-                "spawned": False,
-                "reason": "try_spawn_actor_failed",
-                "placement": placement_debug,
-            }
-            self.spawn_reports.append(report)
-            self.get_logger().warning(
-                f"ROUTE_SIGN_SPAWN_FAILED sign={item.sign_name} d={item.distance_m:.1f}"
-            )
-            return None
+                if not ok:
+                    rejected.append(
+                        {
+                            "side": side,
+                            "extra_curb_m": round(extra_curb_m, 2),
+                            "reason": reject_reason,
+                        }
+                    )
+                    continue
 
-        for method_name in ["set_simulate_physics", "set_enable_gravity"]:
-            try:
-                getattr(actor, method_name)(False)
-            except Exception:
-                pass
+                actor = self.world.try_spawn_actor(bp, transform)
 
-        self.snap_bottom_to_ground(actor, ground_z)
+                if actor is None:
+                    rejected.append(
+                        {
+                            "side": side,
+                            "extra_curb_m": round(extra_curb_m, 2),
+                            "reason": "try_spawn_actor_failed",
+                        }
+                    )
+                    continue
 
-        try:
-            self.world.wait_for_tick(seconds=0.2)
-        except Exception:
-            pass
+                for method_name in ["set_simulate_physics", "set_enable_gravity"]:
+                    try:
+                        getattr(actor, method_name)(False)
+                    except Exception:
+                        pass
 
-        self.created_actors.append(actor)
-        self.draw_debug(actor, item)
+                self.snap_bottom_to_ground(actor, ground_z)
 
-        tf = actor.get_transform()
+                try:
+                    self.world.wait_for_tick(seconds=0.2)
+                except Exception:
+                    pass
+
+                self.created_actors.append(actor)
+                self.draw_debug(actor, item)
+
+                tf = actor.get_transform()
+
+                report = {
+                    "id": actor.id,
+                    "type_id": actor.type_id,
+                    "sign": item.sign_name,
+                    "planned_distance_m": round(item.distance_m, 2),
+                    "side": side,
+                    "x": round(tf.location.x, 3),
+                    "y": round(tf.location.y, 3),
+                    "z": round(tf.location.z, 3),
+                    "yaw": round(tf.rotation.yaw, 2),
+                    "road_option": self.option_name(base_sample.road_option),
+                    "spawned": True,
+                    "reason": item.reason,
+                    "source_event": item.source_event,
+                    "route_index": item.route_index,
+                    "route_anchor_x": item.route_x,
+                    "route_anchor_y": item.route_y,
+                    "used_extra_curb_m": round(extra_curb_m, 2),
+                    "placement": placement_debug,
+                    "rejected_candidate_count_before_success": len(rejected),
+                }
+
+                self.spawn_reports.append(report)
+                self.get_logger().info("ROUTE_SIGN_SPAWNED " + json.dumps(report, ensure_ascii=False))
+                return actor
+
         report = {
-            "id": actor.id,
-            "type_id": actor.type_id,
             "sign": item.sign_name,
             "distance_m": round(item.distance_m, 2),
             "side": item.side,
-            "x": round(tf.location.x, 3),
-            "y": round(tf.location.y, 3),
-            "z": round(tf.location.z, 3),
-            "yaw": round(tf.rotation.yaw, 2),
-            "road_option": self.option_name(sample.road_option),
-            "spawned": True,
-            "reason": item.reason,
-            "used_extra_m": round(used_extra, 2),
-            "placement": placement_debug,
+            "spawned": False,
+            "reason": "no_safe_spawn_candidate",
+            "source_event": item.source_event,
+            "route_index": item.route_index,
+            "route_anchor_x": item.route_x,
+            "route_anchor_y": item.route_y,
+            "rejected_candidate_count": len(rejected),
+            "rejected_candidates_sample": rejected[:30],
         }
 
         self.spawn_reports.append(report)
-        self.get_logger().info("ROUTE_SIGN_SPAWNED " + json.dumps(report, ensure_ascii=False))
-        return actor
+        self.get_logger().error("ROUTE_SIGN_SPAWN_FAILED " + json.dumps(report, ensure_ascii=False))
+        return None
 
     def setup_route_signs(self):
         if self.clear_existing_signs:
@@ -722,14 +900,23 @@ class TeknofestRouteSignsNode(Node):
         mission_points = self.load_mission_points()
         route_samples = self.build_route_samples(mission_points)
 
+        file_plan = self.parse_plan_file()
         manual_plan = self.parse_manual_plan()
 
-        if manual_plan:
+        if file_plan:
+            plan = file_plan
+            self.get_logger().info("ROUTE_SIGN_PLAN_SOURCE file")
+        elif manual_plan:
             plan = manual_plan
             self.get_logger().info("ROUTE_SIGN_PLAN_SOURCE manual")
         else:
+            # Final kullanımda sign_plan_file bekliyoruz.
+            # Yine de eski launch'lar tamamen kırılmasın diye fallback duruyor.
             plan = self.build_auto_plan(route_samples)
-            self.get_logger().info("ROUTE_SIGN_PLAN_SOURCE automatic_route_based")
+            self.get_logger().warning("ROUTE_SIGN_PLAN_SOURCE automatic_route_based_fallback")
+
+        if not plan:
+            raise RuntimeError("Tabela planı boş. Final kullanımda boş plan kabul edilmez.")
 
         spawned = 0
 
@@ -737,9 +924,14 @@ class TeknofestRouteSignsNode(Node):
             if self.spawn_sign(item, route_samples) is not None:
                 spawned += 1
 
-        self.get_logger().info(
-            f"ROUTE_SIGN_SUMMARY spawned={spawned}/{len(plan)} route_len={self.route_len(route_samples):.1f}m"
-        )
+        if spawned != len(plan):
+            self.get_logger().error(
+                f"ROUTE_SIGN_SUMMARY spawned={spawned}/{len(plan)} route_len={self.route_len(route_samples):.1f}m"
+            )
+        else:
+            self.get_logger().info(
+                f"ROUTE_SIGN_SUMMARY spawned={spawned}/{len(plan)} route_len={self.route_len(route_samples):.1f}m"
+            )
 
     def publish_status(self):
         msg = String()
