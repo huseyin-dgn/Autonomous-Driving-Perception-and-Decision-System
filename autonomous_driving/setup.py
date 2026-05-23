@@ -41,6 +41,7 @@ setup(
 
             "teknofest_mission_node = teknofest_sim.teknofest_mission_node:main",
             "teknofest_route_agent_node = teknofest_sim.teknofest_route_agent_node:main",
+            "global_route_planner_node = teknofest_sim.global_route_planner_node:main",
             "lane_assist_node = teknofest_sim.lane_assist_node:main",
             "traffic_light_decision_gate_node = teknofest_sim.traffic_light_decision_gate_node:main",
             "teknofest_scenario_node = teknofest_sim.teknofest_scenario_node:main",

@@ -32,7 +32,6 @@ class TeknofestRouteAgentNode(Node):
         self.declare_parameter("local_target_topic", "/adas/planning/local_target")
         self.declare_parameter("planner_fresh_timeout_s", 1.0)
         self.declare_parameter("planner_speed_hint_enabled", True)
-        self.declare_parameter("planner_local_target_as_destination", False)
         self.declare_parameter("planner_destination_hold_enabled", True)
         self.declare_parameter("planner_destination_reached_m", 7.0)
         self.declare_parameter("planner_destination_update_min_distance_m", 18.0)
@@ -93,9 +92,6 @@ class TeknofestRouteAgentNode(Node):
         )
         self.planner_speed_hint_enabled = bool(
             self.get_parameter("planner_speed_hint_enabled").value
-        )
-        self.planner_local_target_as_destination = bool(
-            self.get_parameter("planner_local_target_as_destination").value
         )
         self.planner_destination_hold_enabled = bool(
             self.get_parameter("planner_destination_hold_enabled").value
@@ -553,39 +549,20 @@ class TeknofestRouteAgentNode(Node):
 
         return self.latest_local_target
 
-    def get_mission_objective_target(self):
+    def get_target(self):
+        planner_target = self.get_fresh_planner_target()
+        if planner_target is not None:
+            return planner_target
+
         if not self.latest_mission:
             return None
 
+        # Eski uyumluluk: planner yoksa mission hedefiyle devam edebilir.
         target = self.latest_mission.get("objective_target")
         if isinstance(target, dict):
             return target
 
-        target = self.latest_mission.get("target")
-        if isinstance(target, dict):
-            return target
-
-        return None
-
-    def get_target(self):
-        """
-        BasicAgent destination seçimi.
-
-        Kritik düzeltme:
-        Planner local target sürekli akan, kısa menzilli takip noktasıdır.
-        BasicAgent'a destination olarak verilirse BasicAgent rotası sürekli resetlenir
-        ve araç zıplaya zıplaya gider.
-
-        Bu yüzden varsayılan davranış:
-          - BasicAgent destination = mission objective
-          - Planner local target = speed_hint/debug
-        """
-        if self.use_planner_local_target and self.planner_local_target_as_destination:
-            planner_target = self.get_fresh_planner_target()
-            if planner_target is not None:
-                return planner_target
-
-        return self.get_mission_objective_target()
+        return self.latest_mission.get("target")
 
     def get_target_key(self):
         target = self.get_target()
@@ -593,18 +570,8 @@ class TeknofestRouteAgentNode(Node):
             return None
 
         planner_key = target.get("_planner_key")
-        if planner_key and self.planner_local_target_as_destination:
+        if planner_key:
             return str(planner_key)
-
-        objective_index = self.latest_mission.get(
-            "objective_index",
-            self.latest_mission.get("route_index", self.latest_mission.get("task_index")),
-        )
-
-        objective_kind = self.latest_mission.get(
-            "objective_kind",
-            self.latest_mission.get("route_kind", ""),
-        )
 
         try:
             carla_x = round(float(target.get("carla_x", target.get("lon", 0.0))), 3)
@@ -615,8 +582,7 @@ class TeknofestRouteAgentNode(Node):
 
         return (
             str(self.latest_mission.get("stage")) + "|" +
-            str(objective_index) + "|" +
-            str(objective_kind) + "|" +
+            str(self.latest_mission.get("objective_index", self.latest_mission.get("task_index"))) + "|" +
             str(target.get("name")) + "|" +
             str(carla_x) + "|" +
             str(carla_y)
@@ -960,29 +926,6 @@ class TeknofestRouteAgentNode(Node):
         control.manual_gear_shift = False
         return control
 
-    def smooth_stop_control(self, reason=""):
-        """
-        Normal STOP durumunda brake=1.0 aracı zıplatıyor.
-        Collision gibi acil durumda hard_stop ayrı kalıyor.
-        Trafik ışığı / karar duruşunda hızla orantılı daha kontrollü fren yapıyoruz.
-        """
-        speed = self.get_speed()
-
-        control = self.carla.VehicleControl()
-        control.throttle = 0.0
-        control.steer = 0.0
-        control.hand_brake = False
-        control.manual_gear_shift = False
-
-        if speed < 0.25:
-            control.brake = 1.0
-            return control
-
-        # 18 km/h civarında ~0.60, düşük hızda ~0.28.
-        brake = 0.22 + 0.075 * float(speed)
-        control.brake = self.clamp(brake, 0.25, 0.65)
-        return control
-
     def normalize_carla_tl_state(self, raw_state):
         if raw_state is None:
             return "unknown"
@@ -1218,7 +1161,7 @@ class TeknofestRouteAgentNode(Node):
             reason = "collision_halt"
             target_speed = 0.0
         elif target_speed <= 0.01:
-            control = self.smooth_stop_control(reason)
+            control = self.hard_stop_control()
         else:
             ok = self.set_agent_destination_if_needed()
             if not ok:
@@ -1305,8 +1248,6 @@ class TeknofestRouteAgentNode(Node):
             "mission_stage": self.get_stage(),
             "task_index": self.latest_mission.get("task_index") if self.latest_mission else None,
             "target_name": target.get("name"),
-            "target_is_planner_local": self.is_planner_local_target(target),
-            "planner_local_as_destination": self.planner_local_target_as_destination,
             "distance_to_target_m": mission_dist,
             "target_speed_mps": round(target_speed, 3),
             "target_speed_kmh": round(self.mps_to_kmh(target_speed), 1),

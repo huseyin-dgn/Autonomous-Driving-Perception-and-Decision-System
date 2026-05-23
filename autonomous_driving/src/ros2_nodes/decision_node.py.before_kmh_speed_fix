@@ -161,13 +161,11 @@ class DecisionNode(Node):
             "isikli_isaret_cihazi",
         }
 
-        # Internal hız birimi m/s.
-        # Levha isimleri km/h olduğu için değerleri gerçek km/h -> m/s dönüştürülmüş halidir.
         self.speed_limit_map = {
-            "hiz_siniri_20": 20.0 / 3.6,
-            "hiz_siniri_30": 30.0 / 3.6,
-            "hiz_siniri_40": 40.0 / 3.6,
-            "hiz_siniri_50": 50.0 / 3.6,
+            "hiz_siniri_20": 0.5,
+            "hiz_siniri_30": 0.8,
+            "hiz_siniri_40": 1.0,
+            "hiz_siniri_50": 1.2,
         }
 
         self.last_front_vehicle = None
@@ -830,7 +828,6 @@ class DecisionNode(Node):
             "decision": final_rule["decision"],
             "risk": final_rule["risk"],
             "target_speed": round(float(final_rule["target_speed"]), 2),
-            "target_speed_kmh": round(float(final_rule["target_speed"]) * 3.6, 1),
             "distance_est": round(float(distance_est), 2) if distance_est is not None else None,
             "front_vehicle": front_vehicle,
             "traffic_light_state": traffic_light_state,
@@ -853,8 +850,6 @@ class DecisionNode(Node):
         }
 
         output = self.stabilize_decision(output)
-        output["target_speed_kmh"] = round(float(output.get("target_speed", 0.0)) * 3.6, 1)
-        output["speed_limit_active_kmh"] = round(float(self.current_speed_limit) * 3.6, 1) if self.current_speed_limit is not None else None
 
         out_msg = String()
         out_msg.data = json.dumps(output, ensure_ascii=False)
@@ -872,8 +867,6 @@ class DecisionNode(Node):
         sign_name = active_sign.get("sign_name") if active_sign else None
         sign_type = active_sign.get("sign_type") if active_sign else None
 
-        speed_limit_kmh = output.get("speed_limit_active_kmh")
-
         light_conf = None
         if traffic_light:
             light_conf = self.get_state_confidence(traffic_light)
@@ -883,7 +876,7 @@ class DecisionNode(Node):
             "================ ADAS DECISION LOG ================\n"
             f"DECISION        : {output.get('decision')}\n"
             f"RISK            : {output.get('risk')}\n"
-            f"TARGET SPEED    : {output.get('target_speed')} m/s | {output.get('target_speed_kmh')} km/h\n"
+            f"TARGET SPEED    : {output.get('target_speed')}\n"
             f"REASON          : {output.get('reason')}\n"
             "---------------------------------------------------\n"
             f"FRONT DISTANCE  : {output.get('distance_est')}\n"
@@ -891,7 +884,7 @@ class DecisionNode(Node):
             f"TRAFFIC LIGHT   : {output.get('traffic_light_state')} | state_conf={light_conf}\n"
             f"TRAFFIC SIGN    : {sign_name} | type={sign_type}\n"
             f"PERSON RISK     : {output.get('person_risk')} | conf={person_conf} | x={person_x} | bottom={person_bottom} | in_path={person_in_path}\n"
-            f"SPEED LIMIT     : {output.get('speed_limit_active')} | {speed_limit_kmh} km/h\n"
+            f"SPEED LIMIT     : {output.get('speed_limit_active')}\n"
             "===================================================\n"
         )
 

@@ -32,11 +32,6 @@ class TeknofestRouteAgentNode(Node):
         self.declare_parameter("local_target_topic", "/adas/planning/local_target")
         self.declare_parameter("planner_fresh_timeout_s", 1.0)
         self.declare_parameter("planner_speed_hint_enabled", True)
-        self.declare_parameter("planner_local_target_as_destination", False)
-        self.declare_parameter("planner_destination_hold_enabled", True)
-        self.declare_parameter("planner_destination_reached_m", 7.0)
-        self.declare_parameter("planner_destination_update_min_distance_m", 18.0)
-        self.declare_parameter("planner_destination_update_min_interval_s", 2.0)
         self.declare_parameter("planner_target_key_resolution_m", 3.0)
         self.declare_parameter("target_speed_smoothing_enabled", True)
         self.declare_parameter("target_speed_accel_limit_mps2", 1.8)
@@ -94,23 +89,6 @@ class TeknofestRouteAgentNode(Node):
         self.planner_speed_hint_enabled = bool(
             self.get_parameter("planner_speed_hint_enabled").value
         )
-        self.planner_local_target_as_destination = bool(
-            self.get_parameter("planner_local_target_as_destination").value
-        )
-        self.planner_destination_hold_enabled = bool(
-            self.get_parameter("planner_destination_hold_enabled").value
-        )
-        self.planner_destination_reached_m = float(
-            self.get_parameter("planner_destination_reached_m").value
-        )
-        self.planner_destination_update_min_distance_m = float(
-            self.get_parameter("planner_destination_update_min_distance_m").value
-        )
-        self.planner_destination_update_min_interval_s = float(
-            self.get_parameter("planner_destination_update_min_interval_s").value
-        )
-        self.last_agent_destination_set_time = 0.0
-        self.active_planner_route_id = None
         self.planner_target_key_resolution_m = float(
             self.get_parameter("planner_target_key_resolution_m").value
         )
@@ -553,39 +531,20 @@ class TeknofestRouteAgentNode(Node):
 
         return self.latest_local_target
 
-    def get_mission_objective_target(self):
+    def get_target(self):
+        planner_target = self.get_fresh_planner_target()
+        if planner_target is not None:
+            return planner_target
+
         if not self.latest_mission:
             return None
 
+        # Eski uyumluluk: planner yoksa mission hedefiyle devam edebilir.
         target = self.latest_mission.get("objective_target")
         if isinstance(target, dict):
             return target
 
-        target = self.latest_mission.get("target")
-        if isinstance(target, dict):
-            return target
-
-        return None
-
-    def get_target(self):
-        """
-        BasicAgent destination seçimi.
-
-        Kritik düzeltme:
-        Planner local target sürekli akan, kısa menzilli takip noktasıdır.
-        BasicAgent'a destination olarak verilirse BasicAgent rotası sürekli resetlenir
-        ve araç zıplaya zıplaya gider.
-
-        Bu yüzden varsayılan davranış:
-          - BasicAgent destination = mission objective
-          - Planner local target = speed_hint/debug
-        """
-        if self.use_planner_local_target and self.planner_local_target_as_destination:
-            planner_target = self.get_fresh_planner_target()
-            if planner_target is not None:
-                return planner_target
-
-        return self.get_mission_objective_target()
+        return self.latest_mission.get("target")
 
     def get_target_key(self):
         target = self.get_target()
@@ -593,18 +552,8 @@ class TeknofestRouteAgentNode(Node):
             return None
 
         planner_key = target.get("_planner_key")
-        if planner_key and self.planner_local_target_as_destination:
+        if planner_key:
             return str(planner_key)
-
-        objective_index = self.latest_mission.get(
-            "objective_index",
-            self.latest_mission.get("route_index", self.latest_mission.get("task_index")),
-        )
-
-        objective_kind = self.latest_mission.get(
-            "objective_kind",
-            self.latest_mission.get("route_kind", ""),
-        )
 
         try:
             carla_x = round(float(target.get("carla_x", target.get("lon", 0.0))), 3)
@@ -615,8 +564,7 @@ class TeknofestRouteAgentNode(Node):
 
         return (
             str(self.latest_mission.get("stage")) + "|" +
-            str(objective_index) + "|" +
-            str(objective_kind) + "|" +
+            str(self.latest_mission.get("objective_index", self.latest_mission.get("task_index"))) + "|" +
             str(target.get("name")) + "|" +
             str(carla_x) + "|" +
             str(carla_y)
@@ -822,89 +770,6 @@ class TeknofestRouteAgentNode(Node):
 
         return dest
 
-    def is_planner_local_target(self, target):
-        if not isinstance(target, dict):
-            return False
-
-        if target.get("_planner_key"):
-            return True
-
-        if str(target.get("kind", "")).lower() == "planner_local":
-            return True
-
-        if str(target.get("name", "")).startswith("planner_local_"):
-            return True
-
-        return False
-
-    def distance_to_location(self, loc):
-        try:
-            ego_loc = self.ego.get_location()
-            return math.hypot(float(ego_loc.x) - float(loc.x), float(ego_loc.y) - float(loc.y))
-        except Exception:
-            return None
-
-    def should_hold_current_destination(self, target, key, new_dest):
-        """
-        Planner local target 10 Hz akıyor. Eski davranışta her birkaç metrede
-        BasicAgent.set_destination tekrar çalışıyordu. Bu, BasicAgent'ın iç route
-        planını sürekli sıfırladığı için araçta tekleme/silkelenme yapıyordu.
-
-        Yeni davranış:
-          - route_id değişirse hemen güncelle.
-          - aktif destination'a yeterince yaklaştıysa güncelle.
-          - yeni destination çok ilerideyse ve minimum süre geçtiyse güncelle.
-          - aksi halde mevcut BasicAgent hedefini tut.
-        """
-        if not self.planner_destination_hold_enabled:
-            return False
-
-        if not self.is_planner_local_target(target):
-            return False
-
-        if self.active_target_key is None or self.active_destination is None:
-            return False
-
-        now = time.time()
-
-        try:
-            route_id = target.get("route_id")
-        except Exception:
-            route_id = None
-
-        if route_id is not None and self.active_planner_route_id is not None:
-            if route_id != self.active_planner_route_id:
-                return False
-
-        active_dist = self.distance_to_location(self.active_destination)
-        if active_dist is None:
-            return False
-
-        if active_dist <= self.planner_destination_reached_m:
-            return False
-
-        try:
-            new_delta = math.hypot(
-                float(new_dest.x) - float(self.active_destination.x),
-                float(new_dest.y) - float(self.active_destination.y),
-            )
-        except Exception:
-            new_delta = 999.0
-
-        elapsed = now - float(self.last_agent_destination_set_time or 0.0)
-
-        if (
-            elapsed >= self.planner_destination_update_min_interval_s
-            and new_delta >= self.planner_destination_update_min_distance_m
-        ):
-            return False
-
-        self.route_status = (
-            f"planner_destination_hold:"
-            f"active_dist={active_dist:.1f},new_delta={new_delta:.1f},elapsed={elapsed:.1f}"
-        )
-        return True
-
     def set_agent_destination_if_needed(self):
         target = self.get_target()
         key = self.get_target_key()
@@ -913,14 +778,10 @@ class TeknofestRouteAgentNode(Node):
             self.route_status = "mission_target_missing"
             return False
 
-        dest = self.destination_from_target(target)
-
         if key == self.active_target_key:
             return True
 
-        if self.should_hold_current_destination(target, key, dest):
-            return True
-
+        dest = self.destination_from_target(target)
         start = self.ego.get_location()
 
         try:
@@ -937,11 +798,6 @@ class TeknofestRouteAgentNode(Node):
 
         self.active_target_key = key
         self.active_destination = dest
-        self.last_agent_destination_set_time = time.time()
-
-        if self.is_planner_local_target(target):
-            self.active_planner_route_id = target.get("route_id")
-
         self.route_status = f"basic_agent_route_to:{target.get('name')}"
 
         self.get_logger().info(
@@ -958,29 +814,6 @@ class TeknofestRouteAgentNode(Node):
         control.steer = 0.0
         control.hand_brake = False
         control.manual_gear_shift = False
-        return control
-
-    def smooth_stop_control(self, reason=""):
-        """
-        Normal STOP durumunda brake=1.0 aracı zıplatıyor.
-        Collision gibi acil durumda hard_stop ayrı kalıyor.
-        Trafik ışığı / karar duruşunda hızla orantılı daha kontrollü fren yapıyoruz.
-        """
-        speed = self.get_speed()
-
-        control = self.carla.VehicleControl()
-        control.throttle = 0.0
-        control.steer = 0.0
-        control.hand_brake = False
-        control.manual_gear_shift = False
-
-        if speed < 0.25:
-            control.brake = 1.0
-            return control
-
-        # 18 km/h civarında ~0.60, düşük hızda ~0.28.
-        brake = 0.22 + 0.075 * float(speed)
-        control.brake = self.clamp(brake, 0.25, 0.65)
         return control
 
     def normalize_carla_tl_state(self, raw_state):
@@ -1218,7 +1051,7 @@ class TeknofestRouteAgentNode(Node):
             reason = "collision_halt"
             target_speed = 0.0
         elif target_speed <= 0.01:
-            control = self.smooth_stop_control(reason)
+            control = self.hard_stop_control()
         else:
             ok = self.set_agent_destination_if_needed()
             if not ok:
@@ -1305,8 +1138,6 @@ class TeknofestRouteAgentNode(Node):
             "mission_stage": self.get_stage(),
             "task_index": self.latest_mission.get("task_index") if self.latest_mission else None,
             "target_name": target.get("name"),
-            "target_is_planner_local": self.is_planner_local_target(target),
-            "planner_local_as_destination": self.planner_local_target_as_destination,
             "distance_to_target_m": mission_dist,
             "target_speed_mps": round(target_speed, 3),
             "target_speed_kmh": round(self.mps_to_kmh(target_speed), 1),
