@@ -886,8 +886,8 @@
     {
       "type": "Feature",
       "properties": {
-        "name": "gorev_3",
-        "description": "3. yolcu alma/indirme noktası",
+        "name": "via_final_uzatma_10",
+        "description": "Park öncesi final uzatma geçiş noktası (371.8 m)",
         "nokta_id": 36,
         "yaw": 0.0,
         "town": "Town03",
@@ -899,7 +899,7 @@
         "lane_id": -2,
         "lane_width": 3.5,
         "is_junction": false,
-        "kind": "task"
+        "kind": "via"
       },
       "geometry": {
         "type": "Point",
@@ -912,8 +912,8 @@
     {
       "type": "Feature",
       "properties": {
-        "name": "park_giris",
-        "description": "Final park noktası - sağa yanaşıp görevi bitir",
+        "name": "park_final_sag_yanasma",
+        "description": "Fotoğrafta seçilen final park noktası - sağa yanaşıp görevi bitir",
         "nokta_id": 37,
         "yaw": 0.0,
         "town": "Town03",

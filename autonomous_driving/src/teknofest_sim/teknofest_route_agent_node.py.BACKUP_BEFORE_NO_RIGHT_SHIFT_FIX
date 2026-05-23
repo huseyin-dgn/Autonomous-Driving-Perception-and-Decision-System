@@ -525,14 +525,6 @@ class TeknofestRouteAgentNode(Node):
         return shifted
 
     def destination_from_target(self, target):
-        """
-        SAFE_LANE_CENTER_FIX:
-        Town03'te target adında 'sag/right/park' geçince yapılan otomatik sağ şerit/sağ shift
-        aracı kaldırım, tabela, direk ve bina tarafına fazla yaklaştırıyordu.
-
-        Bu yüzden hedefi artık doğrudan CARLA'nın sürüş şeridi merkezine projekte ediyoruz.
-        Park hedefinde bile ekstra sağa shift yok; park noktası mission dosyasında zaten belirleniyor.
-        """
         raw_loc = self.mission_geo_to_carla_location_near_ego(target)
 
         wp = self.map.get_waypoint(
@@ -541,20 +533,76 @@ class TeknofestRouteAgentNode(Node):
             lane_type=self.carla.LaneType.Driving,
         )
 
-        stage = str(self.get_stage() or "")
-        target_name = str(target.get("name", "")).lower()
-
         if wp is None:
             self.get_logger().warning("Target waypoint bulunamadı, raw location kullanılacak.")
             return raw_loc
 
-        loc = wp.transform.location
-        dest = self.carla.Location(x=loc.x, y=loc.y, z=loc.z + 0.2)
+        stage = str(self.get_stage() or "")
+        target_name = str(target.get("name", "")).lower()
+        turn_dir, turn_angle = self.get_turn_direction_to_target(target)
+
+        # ROUTE_NAME_LANE_INTENT:
+        # via_right_* sağ şerit/yanaşma, via_left_* sol şerit hazırlığı anlamına gelir.
+        if "via_right" in target_name or "right_" in target_name or "sag" in target_name:
+            turn_dir = "right"
+        elif "via_left" in target_name or "left_" in target_name or "sol" in target_name:
+            turn_dir = "left"
+
+        selected_wp = wp
+        lateral_shift_m = 0.0
+        approach_reason = f"straight_or_center:turn={turn_dir},angle={turn_angle:.1f}"
+
+        # Sola dönüşte sağ şeride zorla sokma. Mümkünse aynı yönde sol şeridi seç.
+        if turn_dir == "left":
+            left_wp = self.get_same_direction_adjacent_lane(wp, "left")
+            if left_wp is not None:
+                selected_wp = left_wp
+                lateral_shift_m = 0.0
+                approach_reason = f"left_turn_use_left_lane:angle={turn_angle:.1f}"
+            else:
+                # Komşu şerit yoksa en azından sağa kaydırma yapma; hafif sola pre-position.
+                selected_wp = wp
+                lateral_shift_m = -0.8
+                approach_reason = f"left_turn_soft_left_shift:angle={turn_angle:.1f}"
+
+        elif turn_dir == "right":
+            right_wp = self.get_same_direction_adjacent_lane(wp, "right")
+            if right_wp is not None:
+                selected_wp = right_wp
+                lateral_shift_m = 0.0
+                approach_reason = f"right_turn_use_right_lane:angle={turn_angle:.1f}"
+            else:
+                selected_wp = wp
+                lateral_shift_m = 0.6
+                approach_reason = f"right_turn_soft_right_shift:angle={turn_angle:.1f}"
+
+        # GOREV2_SIGN_CRASH_FIX:
+        # Gorev 2 sonrasında yolun sağındaki tabela/kaldırım çok yakın.
+        # via_alt_yol_1 için otomatik sağa 0.60 m shift aracı tabelaya yaklaştırıyor.
+        # Bu hedefte şerit merkezini koru; park hedefleri için mevcut yanaşma mantığı kalsın.
+        if target_name == "via_alt_yol_1":
+            lateral_shift_m = 0.0
+            approach_reason += "|gorev2_exit_no_right_shift"
+
+        # Park hedefinde hafif sağ yanaşma mantıklı, ama bunu her hedefe uygulama.
+        if stage in {"GO_TO_PARK", "PARKING"} or "park" in target_name:
+            if turn_dir == "left":
+                # Parka giderken bile sola dönüş varsa sağa çekme.
+                lateral_shift_m = min(lateral_shift_m, 0.0)
+                approach_reason += "|park_left_no_right_shift"
+            elif turn_dir == "right":
+                lateral_shift_m = max(lateral_shift_m, 0.6)
+                approach_reason += "|park_right_shift"
+            else:
+                lateral_shift_m = 0.4
+                approach_reason += "|park_gentle_right_shift"
+
+        dest = self.shifted_location_from_waypoint(selected_wp, lateral_shift_m)
 
         self.get_logger().info(
-            f"Destination lane approach SAFE_CENTER: target={target.get('name')} "
-            f"stage={stage} shift=0.00 reason=no_auto_right_shift "
-            f"dest=({dest.x:.2f},{dest.y:.2f},{dest.z:.2f})",
+            f"Destination lane approach: target={target.get('name')} "
+            f"stage={stage} turn={turn_dir} angle={turn_angle:.1f} "
+            f"shift={lateral_shift_m:.2f} reason={approach_reason}",
             throttle_duration_sec=0.5,
         )
 
