@@ -1,0 +1,52 @@
+ M autonomous_driving/launch/teknofest_carla_full.launch.py
+ M autonomous_driving/src/ros2_nodes/decision_node.py
+ M autonomous_driving/src/ros2_nodes/perception_node.py
+ M autonomous_driving/src/teknofest_sim/global_route_planner_node.py
+ M autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py
+ M autonomous_driving/src/teknofest_sim/traffic_light_decision_gate_node.py
+ M install/autonomous_driving/share/autonomous_driving/launch/teknofest_carla_full.launch.py
+ M log/latest_build
+?? autonomous_driving/launch/teknofest_carla_full.launch.py.BACKUP_BEFORE_CLEAR_LOGS_AND_MODEL_PATH_FIX
+?? autonomous_driving/launch/teknofest_carla_full.launch.py.BACKUP_BEFORE_ENABLE_SIGN_DECISION
+?? autonomous_driving/launch/teknofest_carla_full.launch.py.BACKUP_BEFORE_KMH_SPEED_API
+?? autonomous_driving/launch/teknofest_carla_full.launch.py.BACKUP_BEFORE_NO_TURN_AND_TRUE_SPEED_LIMIT
+?? autonomous_driving/launch/teknofest_carla_full.launch.py.BACKUP_BEFORE_RESTORE_REPO_TRAFFIC_LIGHT
+?? autonomous_driving/launch/teknofest_carla_full.launch.py.BACKUP_BEFORE_SPEED_TUNE_AFTER_SIGN_FIX
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_DISABLE_DUR_STOP_KEEP_FORBIDDEN
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_ENABLE_SIGN_DECISION
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_EXACT_FORBIDDEN_SIGN_SCAN
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_FIX_FAR_STOP_AND_TL_RELEASE
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_KMH_SPEED_API
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_NO_ENTRY_RELEVANCE_FILTER
+?? autonomous_driving/src/ros2_nodes/decision_node.py.BACKUP_BEFORE_NO_TURN_AND_TRUE_SPEED_LIMIT
+?? autonomous_driving/src/ros2_nodes/perception_node.py.BACKUP_BEFORE_CLEAR_LOGS_AND_MODEL_PATH_FIX
+?? autonomous_driving/src/teknofest_sim/global_route_planner_node.py.BACKUP_BEFORE_KMH_SPEED_API
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_CARLA_TL_LOOKAHEAD_GUARD
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_CLEAN_TL_KEEP_SIGN_FINAL
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_FIX_FAR_STOP_AND_TL_RELEASE
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_FIX_TL_GREEN_RELEASE_PULSE
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_FORCE_REMOVE_RED_STOP_PRIORITY_FIX
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_KMH_SPEED_API
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_NO_TURN_AND_TRUE_SPEED_LIMIT
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_RED_STOP_PRIORITY_FIX
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_REMOVE_STRAIGHT_STEER_FORCE
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_RESTORE_REPO_TRAFFIC_LIGHT
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_ROUTE_AGENT_HARD_TL_AND_FORBIDDEN_STEER
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_SAFE_DECISION_FINAL_FORCE
+?? autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py.BACKUP_BEFORE_SAFE_DECISION_FINAL_INTEGRATION
+?? autonomous_driving/src/teknofest_sim/traffic_light_decision_gate_node.py.BACKUP_BEFORE_CLEAR_LOGS_AND_MODEL_PATH_FIX
+?? autonomous_driving/src/teknofest_sim/traffic_light_decision_gate_node.py.BACKUP_BEFORE_SAFE_DECISION_FINAL_FORCE
+?? autonomous_driving/src/teknofest_sim/traffic_light_decision_gate_node.py.BACKUP_BEFORE_SAFE_DECISION_FINAL_INTEGRATION
+?? clean_tl_keep_sign_code.tar.gz
+?? clean_tl_keep_sign_diff.txt
+?? levha_isik_detay_inceleme.tar.gz
+?? levha_isik_git_diff.txt
+?? outputs/
+?? tekno_check_current_core.tar.gz
+?? tekno_check_git_status.txt
+?? tl_levha_current_code.tar.gz
+?? tl_levha_current_diff.txt
+?? tl_route_agent_current_code.tar.gz
+?? tl_route_agent_current_diff.txt
+?? tl_safe_decision_integration_code.tar.gz
+?? tl_safe_decision_integration_diff.txt

@@ -1,0 +1,118 @@
+diff --git a/autonomous_driving/src/ros2_nodes/perception_node.py b/autonomous_driving/src/ros2_nodes/perception_node.py
+index d60e756..7b28c43 100644
+--- a/autonomous_driving/src/ros2_nodes/perception_node.py
++++ b/autonomous_driving/src/ros2_nodes/perception_node.py
+@@ -42,6 +42,42 @@ def env_bool(name, default):
+     value = os.environ.get(name, str(default)).lower().strip()
+     return value in ["1", "true", "yes", "on"]
+ 
++def resolve_runtime_path(path_value, label="path"):
++    """
++    ROS launch bazen relative path'i farklı cwd ile geçiriyor.
++    Bu helper model/ckpt dosyalarını workspace köküne göre de arar.
++    """
++    raw = str(path_value or "").strip()
++    expanded = os.path.expanduser(raw)
++
++    candidates = []
++
++    if expanded:
++        candidates.append(expanded)
++
++    cwd = os.getcwd()
++
++    if expanded and not os.path.isabs(expanded):
++        candidates.append(os.path.join(cwd, expanded))
++        candidates.append(os.path.join(cwd, "autonomous_driving", expanded))
++
++    # Bu dosya install/site-packages içinden çalışsa bile kaynak workspace'i çoğunlukla cwd.
++    # Yine de duplicate path'leri temizleyelim.
++    seen = set()
++    unique = []
++    for c in candidates:
++        c = os.path.abspath(c)
++        if c not in seen:
++            seen.add(c)
++            unique.append(c)
++
++    for c in unique:
++        if os.path.exists(c):
++            return c
++
++    return expanded
++
++
+ 
+ class PerceptionNode(Node):
+     def __init__(self):
+@@ -182,6 +218,25 @@ class PerceptionNode(Node):
+         self.lidar_topic = self.get_parameter("lidar_topic").value
+         self.latest_depth = None
+         self.latest_lidar_front_m = None
++        self.model_path = resolve_runtime_path(self.model_path, "MODEL_PATH")
++        self.tl_state_model_path = resolve_runtime_path(self.tl_state_model_path, "TRAFFIC_LIGHT_STATE_MODEL_PATH")
++        self.sign_classifier_model_path = resolve_runtime_path(self.sign_classifier_model_path, "SIGN_CLASSIFIER_MODEL_PATH")
++
++        self.get_logger().info(
++            "MODEL_PATH_RESOLVED "
++            f"yolo={self.model_path} exists={os.path.exists(self.model_path)} | "
++            f"tl={self.tl_state_model_path} exists={os.path.exists(self.tl_state_model_path)} | "
++            f"sign={self.sign_classifier_model_path} exists={os.path.exists(self.sign_classifier_model_path)}"
++        )
++
++        if not os.path.exists(self.model_path):
++            raise FileNotFoundError(
++                "YOLO model bulunamadı. "
++                f"model_path={self.model_path} cwd={os.getcwd()} "
++                "Çözüm: launch'ta model_path:=autonomous_driving/outputs/models/.../best.pt ver "
++                "veya model dosyasını bu path'e koy."
++            )
++
+         self.model = YOLO(self.model_path)
+ 
+         self.tl_state_model = None
+@@ -1585,16 +1640,11 @@ class PerceptionNode(Node):
+             cx_ratio = cx / max(1.0, float(frame_w))
+             cy_ratio = cy / max(1.0, float(frame_h))
+ 
+-            # ACTIVE_ROI_STRONG_RED_KEEP:
+-            # Güçlü RED tespiti güvenlik açısından ROI dışında diye atılmasın.
+-            # Çünkü CARLA'da doğru kırmızı ışık bazen sol/üst banda düşebiliyor.
+-            keep_red_outside_roi = (
+-                state == "red"
+-                and float(state_conf or 0.0) >= float(os.environ.get("TL_ACTIVE_KEEP_RED_STATE_CONF", "0.85"))
+-                and float(det_conf or 0.0) >= float(os.environ.get("TL_ACTIVE_KEEP_RED_DET_CONF", "0.40"))
+-            )
+-
+-            if roi_enabled and not keep_red_outside_roi:
++            # ACTIVE_TL_STRICT_ROI_FIX:
++            # Aktif ışık seçiminde ROI dışındaki kırmızıları artık korumuyoruz.
++            # Çünkü yeşilde geçmeme hatasının sebebi buydu:
++            # doğru yeşil ışık merkez-sağ ROI içindeyken, yan/uzak kırmızı active seçiliyordu.
++            if roi_enabled:
+                 if not (roi_x_min <= cx_ratio <= roi_x_max and roi_y_min <= cy_ratio <= roi_y_max):
+                     det["active_reject_reason"] = (
+                         f"active_roi_reject:cx={cx_ratio:.3f},cy={cy_ratio:.3f},"
+@@ -1622,13 +1672,19 @@ class PerceptionNode(Node):
+                     "unknown": 0,
+                 }.get(state, 0)
+ 
++            # ACTIVE_TL_SCORE_FIX:
++            # Renk/state önceliği aktif ışık seçiminde baskın olmamalı.
++            # Aynı sahnede yeşil doğru ışık varken yan/uzak kırmızı state_conf=1.0 diye seçiliyordu.
++            # Öncelik: bilinen state, detector güveni, bbox alanı, merkeze yakınlık, sonra state_conf.
++            size_score = min(1.0, area / 450.0)
++
+             score = (
+                 1 if state in known_states else 0,
+-                state_priority,
+-                state_conf,
+                 det_conf,
+-                area,
++                size_score,
+                 center_score,
++                state_conf,
++                state_priority,
+             )
+ 
+             candidates.append((score, det))

@@ -1604,9 +1604,10 @@ class PerceptionNode(Node):
             if d.get("label") != "traffic_light":
                 continue
 
-            # PERCEPTION_REWRITE_V1_CLEANUP:
-            # Eski choose_active_traffic_light içinde lens gate tekrar çalışmasın.
-            # Trafik ışığı state'i artık sadece TrafficLightPipeline.process() içinde belirlenir.
+            if frame is not None:
+                if not self.normalize_or_drop_traffic_light_lens(frame, d):
+                    continue
+
             state = str(d.get("traffic_light_state", "unknown")).lower().strip()
             if state == "unknown" and self.tl_env_bool_safe("TL_DROP_UNKNOWN_LIGHTS", True):
                 continue

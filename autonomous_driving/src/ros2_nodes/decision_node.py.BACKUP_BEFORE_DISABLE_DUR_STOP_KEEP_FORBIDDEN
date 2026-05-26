@@ -694,16 +694,6 @@ class DecisionNode(Node):
             return False, "no_stop_sign"
 
         sign_type = str(active_sign.get("sign_type", "unknown"))
-        # DUR_STOP_DISABLE_KEEP_FORBIDDEN:
-        # DUR levhası şu an trafik ışığı sahnesinde false-positive STOP üretiyor.
-        # Sağa/sola dönülmez ve hız tabelaları etkilenmez; sadece dur STOP'u kapalı.
-        if sign_type == "dur":
-            try:
-                active_sign["stop_sign_rejected"] = "dur_stop_disabled_keep_forbidden"
-            except Exception:
-                pass
-            return False, "dur_stop_disabled_keep_forbidden"
-
 
         # FAR_STOP_SIGN_FILTER:
         # Logda araç çok uzakta, görüntünün üst kısmındaki minik/kararsız levhayı

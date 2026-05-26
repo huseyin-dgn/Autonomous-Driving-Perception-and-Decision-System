@@ -23,8 +23,6 @@ from std_msgs.msg import String
 from cv_bridge import CvBridge
 from ultralytics import YOLO
 
-from ros2_nodes.perception_tl_pipeline import TrafficLightPipeline
-
 
 def env_float(name, default):
     try:
@@ -258,10 +256,6 @@ class PerceptionNode(Node):
 
         self.load_traffic_light_state_classifier()
         self.load_sign_classifier()
-
-        # PERCEPTION_REWRITE_V1:
-        # Trafik ışığı kararını tek geçişli, state mutate etmeyen ayrı pipeline verir.
-        self.tl_pipeline = TrafficLightPipeline(self)
 
         self.window_name = "ADAS PERCEPTION DEBUG"
 
@@ -1604,9 +1598,10 @@ class PerceptionNode(Node):
             if d.get("label") != "traffic_light":
                 continue
 
-            # PERCEPTION_REWRITE_V1_CLEANUP:
-            # Eski choose_active_traffic_light içinde lens gate tekrar çalışmasın.
-            # Trafik ışığı state'i artık sadece TrafficLightPipeline.process() içinde belirlenir.
+            if frame is not None:
+                if not self.normalize_or_drop_traffic_light_lens(frame, d):
+                    continue
+
             state = str(d.get("traffic_light_state", "unknown")).lower().strip()
             if state == "unknown" and self.tl_env_bool_safe("TL_DROP_UNKNOWN_LIGHTS", True):
                 continue
@@ -1677,17 +1672,17 @@ class PerceptionNode(Node):
                     "unknown": 0,
                 }.get(state, 0)
 
-            # ACTIVE_TL_SCORE_CENTER_FIRST_FIX:
-            # Aktif ışık seçiminde det_conf tek başına baskın olmasın.
-            # Doğru ışık genelde ego kamera merkezine daha yakın; yan/uzak RED sadece conf yüksek diye
-            # GREEN'i ezmemeli.
+            # ACTIVE_TL_SCORE_FIX:
+            # Renk/state önceliği aktif ışık seçiminde baskın olmamalı.
+            # Aynı sahnede yeşil doğru ışık varken yan/uzak kırmızı state_conf=1.0 diye seçiliyordu.
+            # Öncelik: bilinen state, detector güveni, bbox alanı, merkeze yakınlık, sonra state_conf.
             size_score = min(1.0, area / 450.0)
 
             score = (
                 1 if state in known_states else 0,
-                center_score,
-                size_score,
                 det_conf,
+                size_score,
+                center_score,
                 state_conf,
                 state_priority,
             )
@@ -1939,36 +1934,27 @@ class PerceptionNode(Node):
                     f"lens_unknown:{lens_reason};old_state={old_state};old_conf={old_conf};old_reason={old_reason}"
                 )
 
-                # --- KEEP_STRONG_CLASSIFIER_STATE_ON_LENS_UNKNOWN ---
-                # CARLA'da uzaktaki gerçek lensler küçük bbox yüzünden lens_unknown dönebiliyor.
-                # Önce sadece RED korunuyordu; bu yüzden GREEN görülmesine rağmen siliniyor,
-                # active ışık başka/yan RED kalıyor ve araç yeşilde kalkmıyordu.
+                # --- KEEP_STRONG_CLASSIFIER_RED_ON_LENS_UNKNOWN ---
+                # CARLA'da bazı gerçek kırmızı ışıklar lens panel filtresinden "unknown" dönebiliyor.
+                # Classifier güçlü RED diyorsa güvenlik için bunu silme; gate'e ulaşsın.
                 try:
                     old_conf_f = float(old_conf)
                 except Exception:
                     old_conf_f = 0.0
 
-                keep_classifier_state = False
-                keep_state = old_state
+                keep_classifier_red = (
+                    old_state == "red"
+                    and old_conf_f >= float(os.environ.get("TL_KEEP_CLASSIFIER_RED_CONF", "0.55"))
+                )
 
-                if old_state == "red" and old_conf_f >= float(os.environ.get("TL_KEEP_CLASSIFIER_RED_CONF", "0.55")):
-                    keep_classifier_state = True
-
-                if old_state == "green" and old_conf_f >= float(os.environ.get("TL_KEEP_CLASSIFIER_GREEN_CONF", "0.70")):
-                    keep_classifier_state = True
-
-                if old_state == "yellow" and old_conf_f >= float(os.environ.get("TL_KEEP_CLASSIFIER_YELLOW_CONF", "0.90")):
-                    keep_classifier_state = True
-
-                if keep_classifier_state:
-                    det["traffic_light_state"] = keep_state
+                if keep_classifier_red:
+                    det["traffic_light_state"] = "red"
                     det["traffic_light_state_confidence"] = old_conf_f
                     det["state_confidence"] = old_conf_f
-                    det["state_conf"] = old_conf_f
-                    det["traffic_light_state_source"] = f"classifier_{keep_state}_keep_lens_unknown"
-                    det["state_source"] = f"classifier_{keep_state}_keep_lens_unknown"
+                    det["traffic_light_state_source"] = "classifier_red_keep_lens_unknown"
+                    det["state_source"] = "classifier_red_keep_lens_unknown"
                     det["traffic_light_color_reason"] = (
-                        f"classifier_{keep_state}_kept_lens_unknown:{lens_reason};"
+                        f"classifier_red_kept_lens_unknown:{lens_reason};"
                         f"old_conf={old_conf};old_reason={old_reason}"
                     )
                     kept.append(det)
@@ -2439,27 +2425,25 @@ class PerceptionNode(Node):
                 old_conf = 0.0
 
             keep_red_conf = float(os.environ.get("TL_FRONT_KEEP_RED_CONF", "0.80"))
-            keep_green_conf = float(os.environ.get("TL_FRONT_KEEP_GREEN_CONF", "0.70"))
             keep_yellow_conf = float(os.environ.get("TL_FRONT_KEEP_YELLOW_CONF", "0.92"))
 
             keep_strong_classifier = (
                 (old_state == "red" and old_conf >= keep_red_conf)
-                or (old_state == "green" and old_conf >= keep_green_conf)
                 or (old_state == "yellow" and old_conf >= keep_yellow_conf)
             )
 
             if keep_strong_classifier:
                 det["drop_traffic_light"] = False
                 det["drop_traffic_light_reason"] = (
-                    f"front_lens_invalid_but_classifier_{old_state}_kept:"
+                    "front_lens_invalid_but_classifier_kept:"
                     + str(result.get("reason", "front_lens_invalid"))
                 )
                 det["traffic_light_state"] = old_state
                 det["traffic_light_state_confidence"] = old_conf
                 det["state_confidence"] = old_conf
                 det["state_conf"] = old_conf
-                det["traffic_light_state_source"] = f"classifier_{old_state}_kept_front_lens_invalid"
-                det["state_source"] = f"classifier_{old_state}_kept_front_lens_invalid"
+                det["traffic_light_state_source"] = "classifier_kept_front_lens_invalid"
+                det["state_source"] = "classifier_kept_front_lens_invalid"
                 det["traffic_light_color_reason"] = det["drop_traffic_light_reason"]
                 return True
 
@@ -2481,9 +2465,9 @@ class PerceptionNode(Node):
         return True
 
     def draw_detection(self, frame, det):
-        # PERCEPTION_REWRITE_V1:
-        # Draw fonksiyonu detection state değiştirmez. Trafik ışığı kararı sadece
-        # TrafficLightPipeline.process() içinde bir kez verilir.
+        if det.get("label") == "traffic_light":
+            if not self.normalize_or_drop_traffic_light_lens(frame, det):
+                return frame
         if self.is_bad_carla_yellow_body_light(det):
             return frame
         x1, y1, x2, y2 = [int(v) for v in det["bbox"]]
@@ -2912,12 +2896,6 @@ class PerceptionNode(Node):
 
 
     def image_callback(self, msg):
-        """
-        PERCEPTION_REWRITE_V1 ana akış.
-
-        Eski JSON sözleşmesini korur ama trafik ışığını tek bir pipeline üzerinden işler.
-        Tabela, araç, yaya, depth/LiDAR ve annotated yayınları korunur.
-        """
         try:
             frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         except Exception as exc:
@@ -2926,6 +2904,7 @@ class PerceptionNode(Node):
 
         frame_h, frame_w = frame.shape[:2]
         annotated = frame.copy()
+
         detections = []
 
         try:
@@ -2993,8 +2972,27 @@ class PerceptionNode(Node):
                         "source": "model_only_yolo",
                     }
 
+                    if label == "traffic_light":
+                        light_result = self.classify_traffic_light_state(
+                            frame,
+                            det["bbox"],
+                        )
+
+                        det["traffic_light_state"] = light_result["state"]
+                        det["traffic_light_state_source"] = light_result["source"]
+                        det["traffic_light_state_confidence"] = light_result["state_confidence"]
+                        det["traffic_light_state_probs"] = light_result["classifier_probs"]
+                        det["traffic_light_state_classifier_reason"] = light_result["classifier_reason"]
+
+                        det["traffic_light_hsv_state"] = light_result["hsv_state"]
+                        det["traffic_light_color_source"] = light_result["source"]
+                        det["traffic_light_color_scores"] = light_result["hsv_scores"]
+                        det["traffic_light_color_reason"] = light_result["final_reason"]
+                        det["traffic_light_hsv_reason"] = light_result["hsv_reason"]
+
                     if label == "traffic_sign":
                         sign_type_from_label = self.get_sign_type_from_label(original_label)
+
                         sign_result = self.classify_traffic_sign_crop(frame, det["bbox"])
 
                         cls_sign_type = sign_result.get("sign_type", "unknown")
@@ -3035,59 +3033,204 @@ class PerceptionNode(Node):
                         else self.model.names[cls_id]
                     )
 
-                    self.get_logger().info(
-                        f"MODEL_DET "
-                        f"class_id={cls_id} "
-                        f"model_name={model_name} "
-                        f"original={original_label} "
-                        f"mapped_label={label} "
-                        f"conf={conf:.3f} "
-                        f"bbox={[round(float(v), 1) for v in det['bbox']]}",
-                        throttle_duration_sec=0.3,
-                    )
+                    if label == "traffic_light":
+                        self.get_logger().info(
+                            f"MODEL_DET "
+                            f"class_id={cls_id} "
+                            f"model_name={model_name} "
+                            f"original={original_label} "
+                            f"mapped_label={label} "
+                            f"conf={conf:.3f} "
+                            f"state={det.get('traffic_light_state')} "
+                            f"state_conf={det.get('traffic_light_state_confidence')} "
+                            f"state_source={det.get('traffic_light_state_source')} "
+                            f"probs={det.get('traffic_light_state_probs')} "
+                            f"hsv_state={det.get('traffic_light_hsv_state')} "
+                            f"hsv_scores={det.get('traffic_light_color_scores')} "
+                            f"reason={det.get('traffic_light_color_reason')} "
+                            f"bbox={[round(float(v), 1) for v in det['bbox']]}",
+                            throttle_duration_sec=0.3,
+                        )
+                    else:
+                        self.get_logger().info(
+                            f"MODEL_DET "
+                            f"class_id={cls_id} "
+                            f"model_name={model_name} "
+                            f"original={original_label} "
+                            f"mapped_label={label} "
+                            f"conf={conf:.3f} "
+                            f"bbox={[round(float(v), 1) for v in det['bbox']]}",
+                            throttle_duration_sec=0.3,
+                        )
 
         detections = self.resolve_person_motorcycle_conflicts(detections)
 
-        detections, tl_info, tl_candidates, tl_rejected = self.tl_pipeline.process(
-            frame,
-            detections,
-            frame_w,
-            frame_h,
-        )
 
         self.screen_red_lights = self.collect_red_traffic_lights_for_screen(
-            [dict(d) for d in tl_candidates],
+            [dict(d) for d in detections],
             frame_w,
             frame_h,
         )
 
-        if tl_rejected:
+        self.apply_lens_hsv_to_traffic_lights(frame, detections)
+
+        detections = [d for d in detections if not self.is_bad_carla_yellow_body_light(d)]
+
+        if self.tl_env_bool_safe("TL_FRONT_LENS_GATE", True):
+            _tl_before = sum(1 for _d in detections if _d.get("label") == "traffic_light")
+            _filtered = []
+            _drop_reasons = []
+
+            for _d in detections:
+                if _d.get("label") == "traffic_light":
+                    if not self.normalize_or_drop_traffic_light_lens(frame, _d):
+                        _drop_reasons.append(_d.get("drop_traffic_light_reason", "front_lens_invalid"))
+                        continue
+
+                _filtered.append(_d)
+
+            detections = _filtered
+            _tl_after = sum(1 for _d in detections if _d.get("label") == "traffic_light")
+
+            if _tl_before != _tl_after:
+                self.get_logger().info(
+                    f"FINAL_TL_FRONT_LENS_GATE before={_tl_before} after={_tl_after} reasons={_drop_reasons[:4]}",
+                    throttle_duration_sec=0.5,
+                )
+        if not hasattr(self, "screen_red_lights"):
+            self.screen_red_lights = []
+
+        active_light_state = "unknown"
+        active_light_confidence = None
+        active_light_color_scores = None
+        active_light_color_reason = None
+        active_light_state_confidence = None
+        active_light_state_source = None
+        active_light_state_probs = None
+        active_light_bbox = None
+
+        active_light = self.choose_active_traffic_light(detections, frame_w, frame_h, frame)
+
+        for det in detections:
+            if det.get("label") == "traffic_light":
+                det["active_traffic_light"] = False
+
+        if active_light is not None:
+            active_light["active_traffic_light"] = True
+
+            active_light_state = active_light.get("traffic_light_state", "unknown")
+            active_light_confidence = float(active_light.get("confidence", 0.0))
+            active_light_color_scores = active_light.get("traffic_light_color_scores", None)
+            active_light_color_reason = active_light.get("traffic_light_color_reason", None)
+            active_light_state_confidence = self.get_tl_state_confidence(active_light)
+            active_light_state_source = active_light.get("traffic_light_state_source", active_light.get("state_source", None))
+            active_light_state_probs = active_light.get("traffic_light_state_probs", active_light.get("tl_state_probs", None))
+            active_light_bbox = active_light.get("bbox", None)
+
+            keep_only_active = False  
+
+            if False and keep_only_active:
+                detections = [
+                    d for d in detections
+                    if d.get("label") != "traffic_light"
+                ] + [active_light]
+
+                detections = sorted(
+                    detections,
+                    key=lambda d: (
+                        1 if d.get("active_traffic_light", False) else 0,
+                        float(d.get("confidence", 0.0)),
+                    ),
+                    reverse=True,
+                )
+
             self.get_logger().info(
-                "TL_PIPELINE_REJECTED "
-                f"count={len(tl_rejected)} "
-                f"reasons={[d.get('tl_pipeline_reject_reason', '-') for d in tl_rejected[:5]]}",
+                f"ACTIVE_TRAFFIC_LIGHT "
+                f"state={active_light_state} "
+                f"det_conf={active_light_confidence:.3f} "
+                f"state_conf={active_light_state_confidence:.3f} "
+                f"bbox={[round(float(v), 1) for v in active_light.get('bbox', [])]}",
                 throttle_duration_sec=0.5,
             )
 
-        if tl_info.get("state", "unknown") != "unknown":
-            bbox = tl_info.get("bbox") or []
+        for det in detections:
+            if det.get("label") == "traffic_light":
+                det["active_traffic_light"] = False
+
+        if active_light is not None:
+            active_light["active_traffic_light"] = True
+
+            active_light_state = active_light.get("traffic_light_state", "unknown")
+            active_light_confidence = float(active_light.get("confidence", 0.0))
+            active_light_color_scores = active_light.get("traffic_light_color_scores", None)
+            active_light_color_reason = active_light.get("traffic_light_color_reason", None)
+
+            keep_only_active = False  
+
+            if False and keep_only_active:
+                detections = [
+                    d for d in detections
+                    if d.get("label") != "traffic_light"
+                ] + [active_light]
+
+                detections = sorted(
+                    detections,
+                    key=lambda d: (
+                        1 if d.get("active_traffic_light", False) else 0,
+                        float(d.get("confidence", 0.0)),
+                    ),
+                    reverse=True,
+                )
+
             self.get_logger().info(
-                "ACTIVE_TRAFFIC_LIGHT_V2 "
-                f"state={tl_info.get('state')} "
-                f"det_conf={float(tl_info.get('confidence') or 0.0):.3f} "
-                f"state_conf={float(tl_info.get('state_confidence') or 0.0):.3f} "
-                f"source={tl_info.get('state_source')} "
-                f"roi={tl_info.get('roi')} "
-                f"score={tl_info.get('score')} "
-                f"bbox={[round(float(v), 1) for v in bbox]} "
-                f"reason={str(tl_info.get('color_reason'))[:120]}",
-                throttle_duration_sec=0.3,
+                f"ACTIVE_TRAFFIC_LIGHT "
+                f"state={active_light_state} "
+                f"det_conf={active_light_confidence:.3f} "
+                f"state_conf={self.get_tl_state_confidence(active_light):.3f} "
+                f"bbox={[round(float(v), 1) for v in active_light.get('bbox', [])]}",
+                throttle_duration_sec=0.5,
             )
+
+        if False and (active_light is None and env_bool("TL_KEEP_ONLY_ACTIVE", True)):
+            rejected_lights = [
+                d for d in detections
+                if d.get("label") == "traffic_light"
+            ]
+
+            if rejected_lights:
+                self.get_logger().info(
+                    f"DROP_INACTIVE_TRAFFIC_LIGHTS count={len(rejected_lights)} "
+                    f"reasons={[d.get('active_reject_reason', '-') for d in rejected_lights[:5]]}",
+                    throttle_duration_sec=0.5,
+                )
+
+            detections = [
+                d for d in detections
+                if d.get("label") != "traffic_light"
+            ]
+
+
+        if env_bool("TL_KEEP_ONLY_ACTIVE", True):
+            before_tl = sum(1 for d in detections if d.get("label") == "traffic_light")
+
+            detections = [
+                d for d in detections
+                if d.get("label") != "traffic_light" or d.get("active_traffic_light", False)
+            ]
+
+            after_tl = sum(1 for d in detections if d.get("label") == "traffic_light")
+
+            if before_tl != after_tl:
+                self.get_logger().info(
+                    f"KEEP_ONLY_ACTIVE_TRAFFIC_LIGHT before={before_tl} after={after_tl}",
+                    throttle_duration_sec=0.5,
+                )
 
         for det in detections:
             self.draw_detection(annotated, det)
 
         self.draw_all_red_lights_on_screen(annotated)
+
         debug_canvas = self.make_debug_canvas(annotated, detections)
 
         payload = {
@@ -3113,17 +3256,13 @@ class PerceptionNode(Node):
 
             "detections": detections,
 
-            "traffic_light_state": tl_info.get("state", "unknown"),
-            "traffic_light_confidence": tl_info.get("confidence"),
-            "traffic_light_state_confidence": tl_info.get("state_confidence"),
-            "traffic_light_state_source": tl_info.get("state_source"),
-            "traffic_light_state_probs": tl_info.get("state_probs"),
-            "traffic_light_color_scores": tl_info.get("color_scores"),
-            "traffic_light_color_reason": tl_info.get("color_reason"),
-            "traffic_light_active_bbox": tl_info.get("bbox"),
-            "traffic_light_candidate_count": tl_info.get("candidate_count"),
-            "traffic_light_rejected_count": tl_info.get("rejected_count"),
-            "perception_rewrite_v1": True,
+            "traffic_light_state": active_light_state,
+            "traffic_light_confidence": active_light_confidence,
+            "traffic_light_state_confidence": active_light_state_confidence,
+            "traffic_light_state_source": active_light_state_source,
+            "traffic_light_state_probs": active_light_state_probs,
+            "traffic_light_color_scores": active_light_color_scores,
+            "traffic_light_color_reason": active_light_color_reason,
         }
 
         msg_out = String()

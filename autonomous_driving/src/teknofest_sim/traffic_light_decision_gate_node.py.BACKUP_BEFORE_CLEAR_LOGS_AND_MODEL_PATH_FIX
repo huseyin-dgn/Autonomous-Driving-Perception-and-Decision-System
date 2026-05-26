@@ -307,14 +307,10 @@ class TrafficLightDecisionGateNode(Node):
             self.get_logger().warning(f"base decision parse hata: {repr(e)}")
 
     def default_decision(self):
-        # Güvenli fallback:
-        # Base decision yoksa genelde perception_node çökmüş, detections gelmiyor
-        # veya decision_node henüz karar basmamış demektir.
         return {
-            "decision": "STOP",
-            "risk": "HIGH",
-            "target_speed": 0.0,
-            "target_speed_kmh": 0.0,
+            "decision": "GO",
+            "risk": "LOW",
+            "target_speed": 2.0,
             "distance_est": None,
             "front_vehicle": None,
             "traffic_light_state": "unknown",
@@ -324,7 +320,7 @@ class TrafficLightDecisionGateNode(Node):
             "traffic_sign_conf": None,
             "person_risk": "none",
             "person_conf": None,
-            "reason": "safe_fallback_no_base_decision_stop:check_perception_or_decision_node",
+            "reason": "default_no_base_decision",
         }
 
     def apply_offlane_person_filter(self, out):
@@ -389,21 +385,10 @@ class TrafficLightDecisionGateNode(Node):
     def publish_safe_decision(self):
         now = time.time()
 
-        base_available = (
-            self.latest_base_decision is not None
-            and now - self.latest_base_time <= self.base_decision_timeout_s
-        )
-
-        if base_available:
+        if self.latest_base_decision is not None and now - self.latest_base_time <= self.base_decision_timeout_s:
             out = dict(self.latest_base_decision)
-            out["base_decision_available"] = True
         else:
             out = self.default_decision()
-            out["base_decision_available"] = False
-            out["base_decision_missing_reason"] = (
-                "no_recent_/adas/decision; perception may be dead, detections may be empty, "
-                "or decision_node callback may not be receiving detections"
-            )
 
         person_filter_reason = "not_checked"
         person_filter_used = False
@@ -480,7 +465,6 @@ class TrafficLightDecisionGateNode(Node):
             "enabled": self.enabled,
             "used": gate_used,
             "reason": gate_reason,
-            "base_available": base_available,
             "latest_tl_age_s": None if self.latest_tl is None else round(now - self.latest_tl_time, 3),
             "base_age_s": None if self.latest_base_decision is None else round(now - self.latest_base_time, 3),
             "person_filter_used": person_filter_used,
@@ -494,8 +478,6 @@ class TrafficLightDecisionGateNode(Node):
         dbg = String()
         dbg.data = json.dumps({
             "stamp": now,
-            "base_available": base_available,
-            "base_age_s": None if self.latest_base_decision is None else round(now - self.latest_base_time, 3),
             "gate_used": gate_used,
             "gate_reason": gate_reason,
             "person_filter_used": person_filter_used,
@@ -506,12 +488,8 @@ class TrafficLightDecisionGateNode(Node):
                 "risk": out.get("risk"),
                 "target_speed": out.get("target_speed"),
                 "reason": out.get("reason"),
-                "base_decision_available": out.get("base_decision_available"),
-                "base_decision_missing_reason": out.get("base_decision_missing_reason"),
                 "traffic_light_state": out.get("traffic_light_state"),
                 "traffic_light_conf": out.get("traffic_light_conf"),
-                "active_sign": out.get("active_sign"),
-                "speed_limit_active": out.get("speed_limit_active"),
             },
         }, ensure_ascii=False)
         self.debug_pub.publish(dbg)

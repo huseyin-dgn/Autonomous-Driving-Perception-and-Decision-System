@@ -77,24 +77,10 @@ class TeknofestRouteAgentNode(Node):
         # Simülasyonda vision yanlış kırmızıya kilitlenirse CARLA'nın gerçek
         # trafik ışığı state'i ile emniyetli şekilde düzelt.
         self.declare_parameter("carla_tl_override_enabled", True)
-        self.declare_parameter("ignore_vision_red_when_carla_not_red", False)
-        self.declare_parameter("post_tl_ignore_s", 0.0)
+        self.declare_parameter("ignore_vision_red_when_carla_not_red", True)
+        self.declare_parameter("post_tl_ignore_s", 7.0)
         self.declare_parameter("green_release_speed_mps", 4.0)
         self.declare_parameter("green_release_boost_s", 2.5)
-
-        # TL_CREEP_AND_GREEN_RELEASE:
-        # CARLA red trigger biraz erken başlıyorsa araç çizgiden fazla geride kalmasın.
-        # Decision red STOP gelene kadar kısa süre çok yavaş süzülür.
-        self.declare_parameter("carla_tl_red_creep_enabled", True)
-        self.declare_parameter("carla_tl_red_creep_s", 1.15)
-        self.declare_parameter("carla_tl_red_creep_speed_mps", 0.65)
-
-        # TL_ROUTE_MISSION_FIX_V2:
-        # Perception kırmızıyı çok uzaktan STOP'a çevirdiğinde aracı çizgiden çok önce
-        # çakmamak için CARLA light zone'a girene kadar kontrollü yaklaş.
-        self.declare_parameter("tl_decision_red_early_creep_enabled", True)
-        self.declare_parameter("tl_decision_red_early_creep_speed_mps", 0.85)
-        self.declare_parameter("tl_decision_red_early_creep_max_s", 9.0)
 
 
         self.carla_root = self.get_parameter("carla_root").value
@@ -189,26 +175,6 @@ class TeknofestRouteAgentNode(Node):
             self.get_parameter("green_release_boost_s").value
         )
 
-        self.carla_tl_red_creep_enabled = bool(
-            self.get_parameter("carla_tl_red_creep_enabled").value
-        )
-        self.carla_tl_red_creep_s = float(
-            self.get_parameter("carla_tl_red_creep_s").value
-        )
-        self.carla_tl_red_creep_speed_mps = float(
-            self.get_parameter("carla_tl_red_creep_speed_mps").value
-        )
-
-        self.tl_decision_red_early_creep_enabled = bool(
-            self.get_parameter("tl_decision_red_early_creep_enabled").value
-        )
-        self.tl_decision_red_early_creep_speed_mps = float(
-            self.get_parameter("tl_decision_red_early_creep_speed_mps").value
-        )
-        self.tl_decision_red_early_creep_max_s = float(
-            self.get_parameter("tl_decision_red_early_creep_max_s").value
-        )
-
         # km/h parametreleri verilirse iç m/s değerlerini burada override et.
         self.max_speed_kmh = float(self.get_parameter("max_speed_kmh").value)
         self.go_speed_kmh = float(self.get_parameter("go_speed_kmh").value)
@@ -231,11 +197,6 @@ class TeknofestRouteAgentNode(Node):
         self.last_carla_tl_at_light = False
         self.post_tl_ignore_until = 0.0
         self.green_release_until = 0.0
-        self.carla_tl_red_since = 0.0
-
-        # Decision tarafındaki TL geçişini ayrıca takip et.
-        self.last_decision_tl_state = "unknown"
-        self.decision_tl_red_since = 0.0
         self.carla = load_carla(self.carla_root)
         self.client = self.carla.Client(self.host, self.port)
         self.client.set_timeout(self.timeout)
@@ -367,52 +328,6 @@ class TeknofestRouteAgentNode(Node):
                                 data["person_risk"] = "offlane_filtered"
             except Exception as exc:
                 self.get_logger().warning(f"offlane person filter hata: {exc}")
-
-            # TL_ROUTE_MISSION_FIX_V2:
-            # Decision red->green geçişini route agent seviyesinde takip et.
-            # Böylece yeşilde target_smooth 0'dan gıdım gıdım başlamaz.
-            try:
-                tl_state = str(
-                    data.get(
-                        "traffic_light_state",
-                        data.get("traffic_light", data.get("tl_state", "unknown")),
-                    )
-                ).lower().strip()
-
-                if tl_state not in {"red", "yellow", "green"}:
-                    reason_l = str(data.get("reason", "")).lower()
-                    if "red_light" in reason_l or "traffic_light_red" in reason_l:
-                        tl_state = "red"
-                    elif "yellow_light" in reason_l or "traffic_light_yellow" in reason_l:
-                        tl_state = "yellow"
-                    else:
-                        tl_state = "unknown"
-
-                now_dec = time.time()
-
-                if tl_state == "red" and self.last_decision_tl_state != "red":
-                    self.decision_tl_red_since = now_dec
-
-                if tl_state == "green" and self.last_decision_tl_state in {"red", "yellow"}:
-                    self.green_release_until = now_dec + max(1.0, float(self.green_release_boost_s))
-                    try:
-                        release_floor = self.clamp(
-                            float(self.green_release_speed_mps),
-                            1.5,
-                            self.max_speed_mps,
-                        )
-                        self.last_smoothed_target_speed_mps = max(
-                            float(self.get_speed()),
-                            min(float(release_floor), float(self.go_speed_mps)),
-                        )
-                        self.last_smoothed_target_time = now_dec
-                    except Exception:
-                        pass
-
-                if tl_state in {"red", "yellow", "green"}:
-                    self.last_decision_tl_state = tl_state
-            except Exception as exc:
-                self.get_logger().warning(f"decision TL state takip hatası: {exc}")
 
             self.latest_decision = data
             self.last_decision_time = time.time()
@@ -899,21 +814,6 @@ class TeknofestRouteAgentNode(Node):
             self.last_smoothed_target_speed_mps = target_speed
             self.last_smoothed_target_time = now
             return target_speed, reason
-
-        # TL_ROUTE_MISSION_FIX_V2:
-        # Kırmızıdan yeşile geçince STOP sonrası hız 0.45 -> 1.35 -> 2.34 diye
-        # gıdım gıdım artmasın. Güvenli hedefe direkt bırak.
-        if now < float(self.green_release_until or 0.0) and target_speed > 0.20:
-            floor = min(
-                float(target_speed),
-                max(1.50, min(float(self.green_release_speed_mps), float(self.go_speed_mps))),
-            )
-            prev = float(self.last_smoothed_target_speed_mps or 0.0)
-            if prev < floor:
-                self.last_smoothed_target_speed_mps = floor
-                self.last_smoothed_target_time = now
-                reason = f"{reason}|green_release_smooth_bypass:{prev:.2f}->{floor:.2f}"
-                return floor, reason
 
         dt = now - float(self.last_smoothed_target_time or now)
         dt = self.clamp(dt, 0.02, 0.20)
@@ -1526,107 +1426,60 @@ class TeknofestRouteAgentNode(Node):
             decision = str(self.latest_decision.get("decision", "STOP")).upper()
             reason = str(self.latest_decision.get("reason", "unknown"))
 
-            # TL_CREEP_AND_GREEN_RELEASE_KEEP_SIGNS:
-            # Güvenlik:
-            # - Decision/perception kırmızı STOP diyorsa STOP final.
-            # - CARLA red görüp decision henüz STOP demediyse kısa süre creep yapar,
-            #   böylece çizgiden çok geride çakılı kalmaz.
-            # - CARLA green görürse stale vision/decision red bekletmesini kaldırır.
-            # Tabela/forbidden-turn kodlarına dokunmaz.
+            # CARLA_TL_GUARD_FIX:
+            # Vision red yanlış/stale kalırsa CARLA state ile şartname davranışını koru.
             if self.carla_tl_override_enabled:
                 tl_guard = self.get_carla_tl_guard_state()
                 at_tl = bool(tl_guard.get("at_light", False))
                 tl_state = str(tl_guard.get("state", "unknown")).lower()
                 tl_reason = self.is_traffic_light_stop_reason(reason)
+
                 now2 = time.time()
 
-                prev_tl_state = str(self.last_carla_tl_state or "unknown").lower()
+                # Işıktan çıkınca kısa süre yeni red tespitlerini yut.
+                if self.last_carla_tl_at_light and not at_tl:
+                    self.post_tl_ignore_until = now2 + self.post_tl_ignore_s
 
-                if at_tl and tl_state == "red":
-                    if prev_tl_state != "red" or self.carla_tl_red_since <= 0.0:
-                        self.carla_tl_red_since = now2
-
-                    self.last_carla_tl_state = tl_state
-                    self.last_carla_tl_at_light = at_tl
-
-                    # Perception/decision zaten kırmızı STOP verdiyse artık süründürme yok.
-                    if decision == "STOP" and tl_reason:
-                        return 0.0, f"decision_stop:{reason}"
-
-                    # CARLA red trigger erken geldiyse kısa süre kontrollü yaklaş.
-                    creep_elapsed = now2 - float(self.carla_tl_red_since or now2)
-                    if (
-                        self.carla_tl_red_creep_enabled
-                        and creep_elapsed < self.carla_tl_red_creep_s
-                        and self.get_speed() > 0.20
-                    ):
-                        creep_speed = self.clamp(
-                            self.carla_tl_red_creep_speed_mps,
-                            0.20,
-                            min(self.slow_speed_mps, 1.0),
-                        )
-                        return creep_speed, f"carla_tl_red_creep:{creep_elapsed:.2f}s"
-
-                    return 0.0, "carla_tl_red"
-
-                if at_tl and tl_state == "yellow":
-                    self.last_carla_tl_state = tl_state
-                    self.last_carla_tl_at_light = at_tl
-                    self.carla_tl_red_since = 0.0
-                    return min(self.slow_speed_mps, 0.60), "carla_tl_yellow"
-
-                if at_tl and tl_state == "green":
-                    self.last_carla_tl_state = tl_state
-                    self.last_carla_tl_at_light = at_tl
-                    self.carla_tl_red_since = 0.0
-
-                    # Yeşilde decision hâlâ eski red STOP tutuyorsa bekleme.
-                    if decision == "STOP" and tl_reason:
-                        release_speed = self.clamp(
-                            float(self.green_release_speed_mps),
-                            1.50,
-                            self.max_speed_mps,
-                        )
-
-                        # target_smooth sıfırdan ağır ağır başlatmasın.
-                        self.last_smoothed_target_speed_mps = release_speed
-                        self.last_smoothed_target_time = now2
-
-                        return release_speed, "carla_tl_green_release"
-
-                if not at_tl:
-                    self.carla_tl_red_since = 0.0
+                # Kırmızı/sarıdan yeşile döndüyse kalkış boost'u.
+                if self.last_carla_tl_state in {"red", "yellow"} and tl_state == "green":
+                    self.green_release_until = now2 + self.green_release_boost_s
+                    self.post_tl_ignore_until = now2 + self.post_tl_ignore_s
 
                 self.last_carla_tl_state = tl_state
                 self.last_carla_tl_at_light = at_tl
 
-            # TL_ROUTE_MISSION_FIX_V2_MISSING_INSERT:
-            # Decision tarafı kırmızı STOP verdi ama CARLA ego henüz ışık trigger alanında değilse
-            # aracı çok uzakta çakma; düşük hızla çizgiye yaklaş.
-            # CARLA at_light red olduğunda yukarıdaki carla_tl_red yine final STOP verir.
-            if decision == "STOP" and self.is_traffic_light_stop_reason(reason):
-                now3 = time.time()
-                red_elapsed = now3 - float(self.decision_tl_red_since or now3)
+                if at_tl and tl_state == "red":
+                    return 0.0, "carla_tl_red"
 
-                try:
-                    at_light_now = bool(getattr(self, "last_carla_tl_at_light", False))
-                    carla_state_now = str(getattr(self, "last_carla_tl_state", "unknown")).lower()
-                except Exception:
-                    at_light_now = False
-                    carla_state_now = "unknown"
+                if at_tl and tl_state == "yellow":
+                    return min(self.slow_speed_mps, 0.60), "carla_tl_yellow"
+
+                if at_tl and tl_state == "green":
+                    if decision == "STOP" and tl_reason:
+                        return self.clamp(
+                            max(self.green_release_speed_mps, self.go_speed_mps),
+                            0.0,
+                            self.max_speed_mps,
+                        ), "carla_tl_green_release"
+
+                if now2 < self.post_tl_ignore_until and decision == "STOP" and tl_reason:
+                    return self.clamp(
+                        max(self.green_release_speed_mps, self.go_speed_mps),
+                        0.0,
+                        self.max_speed_mps,
+                    ), "post_tl_pass_ignore_vision_red"
 
                 if (
-                    self.tl_decision_red_early_creep_enabled
-                    and red_elapsed <= float(self.tl_decision_red_early_creep_max_s)
-                    and not (at_light_now and carla_state_now == "red")
-                    and self.get_speed() < max(2.2, float(self.tl_decision_red_early_creep_speed_mps) + 0.8)
+                    self.ignore_vision_red_when_carla_not_red
+                    and decision == "STOP"
+                    and tl_reason
+                    and tl_state != "red"
                 ):
-                    creep_speed = self.clamp(
-                        self.tl_decision_red_early_creep_speed_mps,
-                        0.30,
-                        min(self.slow_speed_mps, 1.20),
-                    )
-                    return creep_speed, f"decision_red_early_creep:{red_elapsed:.1f}s:{reason}"
+                    return self.clamp(
+                        max(self.green_release_speed_mps, self.go_speed_mps),
+                        0.0,
+                        self.max_speed_mps,
+                    ), f"ignore_vision_red_carla_{tl_state}"
 
             if decision == "STOP":
                 return 0.0, f"decision_stop:{reason}"

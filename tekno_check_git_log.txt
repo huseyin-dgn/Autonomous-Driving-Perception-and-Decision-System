@@ -1,0 +1,52 @@
+8a8c0c1 (refs/stash) On main: before_reset_to_988f5696_traffic_light_broken_stack_20260524_192815
+f604a21 index on main: 8e69bd5 Add TrafficLightDecisionGateNode for traffic light decision making
+d3cdae6 untracked files on main: 8e69bd5 Add TrafficLightDecisionGateNode for traffic light decision making
+8e69bd5 Add TrafficLightDecisionGateNode for traffic light decision making
+4345982 Implement smooth spectator camera follow for Teknofest simulation
+76c5ec6 Refactor code structure for improved readability and maintainability
+988f569 (HEAD -> refactor/modular-decision-stack, origin/main, origin/HEAD, main) geojson yarışmaya göre düzenlendi rota oluşturma eklendi
+3b21803 tabelalar tamamlandı yol çalışması eklendi
+6a336d1 tabelalar eklenmeye başlandı
+ab0d0f2 rota düzenlendi
+a2b7425 hız  test için yükseltildi
+65457c1 tabelalar spawn edildi  town_03'e geçiş yapıldı
+e873644 Şerit takip kararlılığı ve görev yönlendirme sistemi iyileştirildi
+b67d6e2 CARLA levha test eklentilerini temizle ve simülasyonu kararlı hale getir
+db4904a Trafik levhası algılama sistemi geliştirildi
+c9ed189 CARLA simülasyonunda ZED ve LiDAR füzyonunu algılama hattına ekle
+76c87da görev mapp'i genişletildi
+ced8d6b kırmızı ışıklarda durup kalkma iyileştirildi ani frenler önlendi
+886dbe1 araç hızlanması iyileştirildi
+e7b5007 Backup dosyalarını git takibinden çıkar
+e5307c1 TEKNOFEST sürüş sistemi ve şerit takibi geliştirildi
+70e5f7b simülasyon ortamı eklendi
+f122f16 dosya temizliği yapıldı
+1b50dcc SEnaryo kuruömları ve perception node iyileştirmesi.
+bdb515f Carla simülasyon eklentisi yapıldı.Aynı zamanda insan , trafik ışığı ve motorsiklet ortamları kurulup test edildi.Bu değişiklikler sonucunda sistem test aşamasına geçiş yaptı
+b1e1a20 Clean ADAS project structure and add CARLA perception updates
+8de0dea Add ADAS Gazebo test scenarios and update decision logic
+cdfb797 Karar paneli eklendi ve hedef hiza gore kontrol guncellendi
+770f047 Update README.md
+632871e Revise image display and add detection output description
+c17bc78 Update README.md
+5320725 git commit -m "Add traffic sign classification and speed limit simulation model"
+0a9bf48 Insert : Levha Sınıflandırması
+07678ae Cleaning
+438d16f Add portable traffic sign and green light simulation models
+631e74a Update README.md
+e796c6c Update README.md
+4e718d4 enter image
+453f65e Insert : Trafik ışığı algılama kısımları eklendi. Sdf dosyaları ayarlandı.
+2eebec1 Insert : İnsan algılama kısımları gazeboya entegre edildi.Daha doğru sonuçlar için eğitim gerekli.
+aa39e45 fix : gazebo sim ve .py düzenlemeleri
+e13890e Update README.md
+56d4af7 Autonomous driving proje dosyalari guncellendi
+75aba8f Gazebo config - ROS2 Node entegreleri tamamlandı
+357cd28 Update image paths in README.md for results
+d53a47a Update README.md
+31aef50 Update README.md
+f68750c Update README.md
+1bd54dc Update README.md
+5f34a5b Create README.md
+0694c65 ADAS perception, decision pipeline, notebooks, configs, and sample outputs
+cf75198 Initial commit
