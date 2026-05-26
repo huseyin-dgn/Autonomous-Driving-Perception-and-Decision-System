@@ -311,10 +311,9 @@ class TrafficLightDecisionGateNode(Node):
         # Base decision yoksa genelde perception_node çökmüş, detections gelmiyor
         # veya decision_node henüz karar basmamış demektir.
         return {
-            "decision": "STOP",
-            "risk": "HIGH",
-            "target_speed": 0.0,
-            "target_speed_kmh": 0.0,
+            "decision": "GO",
+            "risk": "LOW",
+            "target_speed": 2.0,
             "distance_est": None,
             "front_vehicle": None,
             "traffic_light_state": "unknown",
@@ -324,7 +323,7 @@ class TrafficLightDecisionGateNode(Node):
             "traffic_sign_conf": None,
             "person_risk": "none",
             "person_conf": None,
-            "reason": "safe_fallback_no_base_decision_stop:check_perception_or_decision_node",
+            "reason": "fallback_no_base_decision_check_perception_or_decision_node",
         }
 
     def apply_offlane_person_filter(self, out):

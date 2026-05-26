@@ -1,0 +1,604 @@
+diff --git a/autonomous_driving/launch/teknofest_carla_full.launch.py b/autonomous_driving/launch/teknofest_carla_full.launch.py
+index 20c848b..d39dde5 100644
+--- a/autonomous_driving/launch/teknofest_carla_full.launch.py
++++ b/autonomous_driving/launch/teknofest_carla_full.launch.py
+@@ -58,11 +58,11 @@ def generate_launch_description():
+         DeclareLaunchArgument("mission_geojson", default_value="autonomous_driving/missions/teknofest_town03_competition_v4_tasks_only.geojson"),
+         DeclareLaunchArgument(
+             "model_path",
+-            default_value="outputs/models/adas5_targeted_aug_finetune_from_old_img1024_b8_ep50/weights/best.pt",
++            default_value="autonomous_driving/outputs/models/adas5_targeted_aug_finetune_from_old_img1024_b8_ep50/weights/best.pt",
+         ),
+         DeclareLaunchArgument(
+             "tl_model_path",
+-            default_value="outputs/models/traffic_light_state_resnet18_carla/best.pt",
++            default_value="autonomous_driving/outputs/models/traffic_light_state_resnet18_carla/best.pt",
+         ),
+         DeclareLaunchArgument(
+             "sign_model_path",
+@@ -278,8 +278,12 @@ def generate_launch_description():
+                     parameters=[{
+                         "detections_topic": "/adas/perception/detections_json",
+                         "decision_topic": "/adas/decision",
+-                        "default_go_speed": 5.5,
+-                        "slow_speed": 2.0,
++                        "default_go_speed": 8.33,
++                        "default_go_speed_kmh": 30.0,
++                        "slow_speed_kmh": 10.0,
++                        "creep_speed_kmh": 4.0,
++                        "stop_speed_kmh": 0.0,
++                        "slow_speed": 2.78,
+                         "stop_speed": 0.0,
+                         "stop_distance": 3.0,
+                         "slow_distance": 8.0,
+@@ -290,8 +294,28 @@ def generate_launch_description():
+                         "person_conf_threshold": 0.60,
+                         "traffic_light_conf_threshold": 0.45,
+ 
+-                        # Karar tarafını şimdilik tabelalara bağlamıyoruz.
+-                        "traffic_sign_conf_threshold": 0.99,
++                        # Levha kararları aktif.
++                        # Perception 0.15 ile traffic_sign yayıyor; decision tarafında da makul eşik kullanıyoruz.
++                        "traffic_sign_conf_threshold": 0.15,
++                        "sign_classifier_conf_threshold": 0.40,
++
++                        # Çok uzaktaki/minik levhalar aracı kilitlemesin.
++                        "sign_min_bottom_ratio": 0.18,
++                        "sign_min_area_ratio": 0.00020,
++
++                        # DUR levhası: bir kere dur, sonra aynı levhayı kısa süre tekrar tetikleme.
++                        "stop_sign_hold_seconds": 2.0,
++                        "stop_sign_cooldown_seconds": 7.0,
++
++                        "forbidden_turn_sign_max_distance_m": 35.0,
++                        "forbidden_turn_hold_seconds": 45.0,
++
++                        # Girişi olmayan yol / taşıt giremez sadece gerçekten önümüzdeyse rota değiştirir.
++                        "no_entry_relevance_filter_enabled": True,
++                        "no_entry_max_distance_m": 18.0,
++                        "no_entry_min_bottom_ratio": 0.42,
++                        "no_entry_min_cx_ratio": 0.35,
++                        "no_entry_max_cx_ratio": 0.65,
+ 
+                         "lane_center_tolerance_ratio": 0.18,
+                     }],
+@@ -385,8 +409,8 @@ def generate_launch_description():
+                         "planner_local_target_as_destination": False,
+                         "planner_target_key_resolution_m": 3.0,
+                         "target_speed_smoothing_enabled": True,
+-                        "target_speed_accel_limit_mps2": 1.2,
+-                        "target_speed_decel_limit_mps2": 7.0,
++                        "target_speed_accel_limit_mps2": 2.8,
++                        "target_speed_decel_limit_mps2": 8.0,
+                         "planner_destination_hold_enabled": True,
+                         "planner_destination_reached_m": 7.0,
+                         "planner_destination_update_min_distance_m": 18.0,
+@@ -399,8 +423,11 @@ def generate_launch_description():
+                         "lookahead_m": 20.0,
+                         "replan_min_interval_s": 1.0,
+                         "mission_timeout_s": 3.0,
+-                        "default_speed_hint_mps": 5.0,
+-                        "approach_speed_hint_mps": 1.2,
++                        "default_speed_hint_mps": 8.33,
++                        "default_speed_hint_kmh": 30.0,
++                        "approach_speed_hint_kmh": 6.5,
++                        "parking_speed_hint_kmh": 2.7,
++                        "approach_speed_hint_mps": 1.8,
+                         "parking_speed_hint_mps": 0.75,
+                     }],
+                 ),
+@@ -423,14 +450,19 @@ def generate_launch_description():
+                         "ego_role_name": "ego_vehicle",
+                         "decision_topic": "/adas/decision_safe",
+                         "green_release_boost_s": 2.5,
+-                        "green_release_speed_mps": 5.5,
++                        "green_release_speed_mps": 8.33,
+                         "post_tl_ignore_s": 7.0,
+                         "ignore_vision_red_when_carla_not_red": True,
+                         "carla_tl_override_enabled": True,
+                         "mission_topic": "/adas/teknofest/mission",
+-                        "max_speed_mps": 6.0,
+-                        "go_speed_mps": 5.0,
+-                        "slow_speed_mps": 2.0,
++                        "max_speed_mps": 8.80,
++                        "max_speed_kmh": 31.7,
++                        "go_speed_kmh": 30.0,
++                        "slow_speed_kmh": 10.0,
++                        "parking_speed_kmh": 2.7,
++                        "green_release_speed_kmh": 30.0,
++                        "go_speed_mps": 8.33,
++                        "slow_speed_mps": 2.78,
+                         "parking_speed_mps": 0.75,
+                         "lookahead_m": 20.0,
+                         "max_steer": 0.55,
+diff --git a/autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py b/autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py
+index bf5933f..351bc1c 100644
+--- a/autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py
++++ b/autonomous_driving/src/teknofest_sim/teknofest_route_agent_node.py
+@@ -52,6 +52,13 @@ class TeknofestRouteAgentNode(Node):
+         self.declare_parameter("slow_speed_mps", 1.4)
+         self.declare_parameter("parking_speed_mps", 0.65)
+ 
++        # İnsan/launch tarafı km/h. Verilirse m/s değerlerini override eder.
++        self.declare_parameter("max_speed_kmh", -1.0)
++        self.declare_parameter("go_speed_kmh", -1.0)
++        self.declare_parameter("slow_speed_kmh", -1.0)
++        self.declare_parameter("parking_speed_kmh", -1.0)
++        self.declare_parameter("green_release_speed_kmh", -1.0)
++
+         # BasicAgent direksiyonu kendi üretir. Bunu çok düşük tutarsan araç dönemiyor.
+         self.declare_parameter("max_steer", 0.70)
+         self.declare_parameter("lane_assist_enabled", True)
+@@ -167,6 +174,24 @@ class TeknofestRouteAgentNode(Node):
+             self.get_parameter("green_release_boost_s").value
+         )
+ 
++        # km/h parametreleri verilirse iç m/s değerlerini burada override et.
++        self.max_speed_kmh = float(self.get_parameter("max_speed_kmh").value)
++        self.go_speed_kmh = float(self.get_parameter("go_speed_kmh").value)
++        self.slow_speed_kmh = float(self.get_parameter("slow_speed_kmh").value)
++        self.parking_speed_kmh = float(self.get_parameter("parking_speed_kmh").value)
++        self.green_release_speed_kmh = float(self.get_parameter("green_release_speed_kmh").value)
++
++        if self.max_speed_kmh >= 0.0:
++            self.max_speed_mps = self.kmh_to_mps(self.max_speed_kmh)
++        if self.go_speed_kmh >= 0.0:
++            self.go_speed_mps = self.kmh_to_mps(self.go_speed_kmh)
++        if self.slow_speed_kmh >= 0.0:
++            self.slow_speed_mps = self.kmh_to_mps(self.slow_speed_kmh)
++        if self.parking_speed_kmh >= 0.0:
++            self.parking_speed_mps = self.kmh_to_mps(self.parking_speed_kmh)
++        if self.green_release_speed_kmh >= 0.0:
++            self.green_release_speed_mps = self.kmh_to_mps(self.green_release_speed_kmh)
++
+         self.last_carla_tl_state = "unknown"
+         self.last_carla_tl_at_light = False
+         self.post_tl_ignore_until = 0.0
+@@ -190,6 +215,13 @@ class TeknofestRouteAgentNode(Node):
+             "target_speed": 0.0,
+             "reason": "initial",
+         }
++
++        # Yasak dönüş/girilmez levhası gelince geçici lokal detour hedefi.
++        self.forbidden_turn_request = None
++        self.forbidden_turn_until = 0.0
++        self.forbidden_detour_target = None
++        self.last_forbidden_turn_key = None
++
+         self.latest_mission = None
+         self.last_decision_time = 0.0
+         self.last_mission_time = 0.0
+@@ -300,9 +332,263 @@ class TeknofestRouteAgentNode(Node):
+             self.latest_decision = data
+             self.last_decision_time = time.time()
+ 
++            self.update_forbidden_turn_from_decision(data)
++
+         except Exception as exc:
+             self.get_logger().warning(f"decision parse hatası: {exc}")
+ 
++    def angle_norm_deg(self, angle):
++        return (float(angle) + 180.0) % 360.0 - 180.0
++
++    def classify_relative_turn_to_location(self, ego_tf, loc):
++        try:
++            ego_loc = ego_tf.location
++            fwd = ego_tf.get_forward_vector()
++            right = ego_tf.get_right_vector()
++
++            vx = float(loc.x) - float(ego_loc.x)
++            vy = float(loc.y) - float(ego_loc.y)
++
++            forward_dot = vx * float(fwd.x) + vy * float(fwd.y)
++            right_dot = vx * float(right.x) + vy * float(right.y)
++
++            angle_deg = math.degrees(math.atan2(right_dot, max(0.001, forward_dot)))
++
++            if angle_deg > 25.0:
++                return "right", angle_deg
++            if angle_deg < -25.0:
++                return "left", angle_deg
++            return "straight", angle_deg
++
++        except Exception:
++            return "unknown", 0.0
++
++    def forbidden_turn_is_active(self):
++        """
++        Yasak dönüş isteği süre doldu diye kavşak üstünde unutulmamalı.
++
++        Eski davranış:
++          - saga_donulmez kırmızı ışıkta görülüyor
++          - araç kırmızıda beklerken 12s hold süresi doluyor
++          - yeşilde yasak unutulup ana hedefe sağdan gidilebiliyor
++
++        Yeni davranış:
++          - Detour hedefi varsa hedefe yaklaşana kadar aktif tut
++          - Süre dolduysa ama detour hâlâ geçilmediyse süreyi küçük adımlarla uzat
++        """
++        now = time.time()
++
++        if self.forbidden_turn_request is None:
++            return False
++
++        if self.forbidden_detour_target is not None:
++            try:
++                detour_loc = self.carla.Location(
++                    x=float(self.forbidden_detour_target["carla_x"]),
++                    y=float(self.forbidden_detour_target["carla_y"]),
++                    z=float(self.forbidden_detour_target.get("carla_z", 0.2)),
++                )
++                d = self.distance_to_location(detour_loc)
++
++                if d is not None and d <= 5.5:
++                    self.clear_forbidden_turn(f"detour_reached:{d:.1f}m")
++                    return False
++
++                # Süre doldu ama detour geçilmediyse aktif tut.
++                if now > self.forbidden_turn_until:
++                    self.forbidden_turn_until = now + 2.0
++
++                return True
++
++            except Exception:
++                # Detour hedefi parse edilemiyorsa süre kontrolüne düş.
++                pass
++
++        if now > self.forbidden_turn_until:
++            self.clear_forbidden_turn("expired_no_detour")
++            return False
++
++        return True
++
++    def clear_forbidden_turn(self, reason):
++        if self.forbidden_turn_request is not None:
++            self.get_logger().info(f"FORBIDDEN_TURN_CLEAR reason={reason}")
++
++        self.forbidden_turn_request = None
++        self.forbidden_turn_until = 0.0
++        self.forbidden_detour_target = None
++        self.last_forbidden_turn_key = None
++        self.active_target_key = None
++
++    def make_forbidden_turn_detour(self, request):
++        """
++        CARLA haritasında ego önündeki branch'leri dener ve yasak olmayan
++        bir lokal hedef seçer. Bu BasicAgent destination'ı geçici olarak değiştirir.
++        Böylece saga_donulmez varken sağ branch'e, sola_donulmez varken sol branch'e girmez.
++        """
++        try:
++            forbidden = str(request.get("forbidden_turn", "")).lower().strip()
++            sign_type = str(request.get("sign_type", "unknown"))
++
++            ego_tf = self.ego.get_transform()
++            ego_loc = ego_tf.location
++
++            start_wp = self.map.get_waypoint(
++                ego_loc,
++                project_to_road=True,
++                lane_type=self.carla.LaneType.Driving,
++            )
++
++            if start_wp is None:
++                return None
++
++            if forbidden == "right":
++                blocked = {"right"}
++                preference = {"straight": 0, "left": 1, "right": 99, "unknown": 50}
++            elif forbidden == "left":
++                blocked = {"left"}
++                preference = {"straight": 0, "right": 1, "left": 99, "unknown": 50}
++            elif forbidden in {"straight", "no_entry"}:
++                blocked = {"straight"}
++                preference = {"right": 0, "left": 0, "straight": 99, "unknown": 50}
++            else:
++                return None
++
++            candidates = []
++            step_m = 7.0
++            frontier = [(start_wp, 0.0)]
++            visited = set()
++
++            for _depth in range(8):
++                new_frontier = []
++
++                for wp, dist_m in frontier:
++                    try:
++                        next_list = wp.next(step_m)
++                    except Exception:
++                        next_list = []
++
++                    for nxt in next_list:
++                        try:
++                            key = (
++                                int(getattr(nxt, "road_id", 0)),
++                                int(getattr(nxt, "lane_id", 0)),
++                                int(round(float(nxt.transform.location.x))),
++                                int(round(float(nxt.transform.location.y))),
++                            )
++                        except Exception:
++                            key = None
++
++                        if key is not None and key in visited:
++                            continue
++
++                        if key is not None:
++                            visited.add(key)
++
++                        total_d = float(dist_m) + step_m
++                        loc = nxt.transform.location
++                        turn, angle = self.classify_relative_turn_to_location(ego_tf, loc)
++
++                        if total_d >= 22.0:
++                            if turn not in blocked:
++                                pref = preference.get(turn, 50)
++                                # Düz gitmek genelde en güvenli; çok keskin açıları sona at.
++                                angle_penalty = abs(float(angle)) * 0.01
++                                score = pref + angle_penalty + abs(total_d - 32.0) * 0.02
++                                candidates.append((score, nxt, turn, angle, total_d))
++
++                        if total_d <= 55.0:
++                            new_frontier.append((nxt, total_d))
++
++                frontier = new_frontier[:24]
++
++            if not candidates:
++                self.get_logger().warning(
++                    f"FORBIDDEN_TURN_DETOUR_NOT_FOUND sign={sign_type} forbidden={forbidden}"
++                )
++                return None
++
++            candidates.sort(key=lambda x: x[0])
++            _score, best_wp, turn, angle, total_d = candidates[0]
++            loc = best_wp.transform.location
++
++            target = {
++                "name": f"forbidden_detour_{sign_type}_{forbidden}_{turn}",
++                "description": f"Temporary detour for {sign_type}; forbidden={forbidden}; selected={turn}",
++                "carla_x": float(loc.x),
++                "carla_y": float(loc.y),
++                "carla_z": float(loc.z),
++                "carla_yaw": float(best_wp.transform.rotation.yaw),
++                "lat": float(loc.y),
++                "lon": float(loc.x),
++                "kind": "forbidden_turn_detour",
++                "forbidden_turn": forbidden,
++                "selected_turn": turn,
++                "selected_angle_deg": round(float(angle), 2),
++                "detour_distance_m": round(float(total_d), 2),
++                "sign_type": sign_type,
++            }
++
++            self.get_logger().warning(
++                "FORBIDDEN_TURN_DETOUR_SET "
++                f"sign={sign_type} forbidden={forbidden} selected={turn} "
++                f"angle={angle:.1f} dist={total_d:.1f} "
++                f"dest=({loc.x:.2f},{loc.y:.2f},{loc.z:.2f})"
++            )
++
++            return target
++
++        except Exception as exc:
++            self.get_logger().warning(f"FORBIDDEN_TURN_DETOUR_FAILED: {exc}")
++            return None
++
++    def update_forbidden_turn_from_decision(self, data):
++        req = data.get("route_replan_request")
++
++        if not isinstance(req, dict) or not bool(req.get("active", False)):
++            return
++
++        forbidden = str(req.get("forbidden_turn", "")).lower().strip()
++        if forbidden not in {"right", "left", "straight", "no_entry"}:
++            return
++
++        sign_type = str(req.get("sign_type", "unknown"))
++        distance_m = req.get("distance_m", None)
++
++        try:
++            distance_key = round(float(distance_m), 1) if distance_m is not None else -1.0
++        except Exception:
++            distance_key = -1.0
++
++        key = f"{sign_type}|{forbidden}|{distance_key}"
++
++        now = time.time()
++        hold_s = float(req.get("hold_seconds", 12.0) or 12.0)
++
++        # Aynı isteği sürekli geliyorsa destination'ı her frame resetleme.
++        if (
++            self.last_forbidden_turn_key == key
++            and self.forbidden_turn_request is not None
++            and now < self.forbidden_turn_until
++        ):
++            self.forbidden_turn_until = max(self.forbidden_turn_until, now + hold_s)
++            return
++
++        detour = self.make_forbidden_turn_detour(req)
++
++        self.forbidden_turn_request = dict(req)
++        self.forbidden_turn_until = now + hold_s
++        self.forbidden_detour_target = detour
++        self.last_forbidden_turn_key = key
++
++        # BasicAgent yeni detour hedefini hemen alsın.
++        self.active_target_key = None
++
++        if detour is None:
++            self.get_logger().warning(
++                f"FORBIDDEN_TURN_ACTIVE_BUT_NO_DETOUR sign={sign_type} forbidden={forbidden}"
++            )
++
+     def mission_cb(self, msg):
+         try:
+             self.latest_mission = json.loads(msg.data)
+@@ -460,6 +746,12 @@ class TeknofestRouteAgentNode(Node):
+         except Exception:
+             return 0.0
+ 
++    def kmh_to_mps(self, value):
++        try:
++            return float(value) / 3.6
++        except Exception:
++            return 0.0
++
+     def apply_planner_speed_hint_cap(self, target_speed, reason):
+         """
+         Planner speed_hint eskiden sadece resolve_target_speed sonundaki normal dönüşte
+@@ -476,6 +768,13 @@ class TeknofestRouteAgentNode(Node):
+             return target_speed, reason
+ 
+         speed_hint = planner_target.get("speed_hint_mps")
++
++        if planner_target.get("speed_hint_kmh") is not None:
++            try:
++                speed_hint = self.kmh_to_mps(planner_target.get("speed_hint_kmh"))
++            except Exception:
++                pass
++
+         if speed_hint is None:
+             return target_speed, reason
+ 
+@@ -488,7 +787,7 @@ class TeknofestRouteAgentNode(Node):
+         capped = min(target_speed, speed_hint)
+ 
+         if capped < target_speed - 0.01 and "planner_speed_hint" not in str(reason):
+-            reason = f"{reason}|planner_speed_hint:{speed_hint:.2f}mps/{speed_hint * 3.6:.1f}kmh"
++            reason = f"{reason}|planner_speed_hint:{speed_hint * 3.6:.1f}kmh/{speed_hint:.2f}mps"
+ 
+         return capped, reason
+ 
+@@ -571,15 +870,18 @@ class TeknofestRouteAgentNode(Node):
+         """
+         BasicAgent destination seçimi.
+ 
+-        Kritik düzeltme:
+-        Planner local target sürekli akan, kısa menzilli takip noktasıdır.
+-        BasicAgent'a destination olarak verilirse BasicAgent rotası sürekli resetlenir
+-        ve araç zıplaya zıplaya gider.
+-
+-        Bu yüzden varsayılan davranış:
++        Normalde:
+           - BasicAgent destination = mission objective
+           - Planner local target = speed_hint/debug
++
++        Yasak dönüş/girilmez levhası aktifse:
++          - BasicAgent destination = geçici lokal detour hedefi
++          - Detour geçilince ana mission objective'e geri dönülür.
+         """
++        if self.forbidden_turn_is_active():
++            if self.forbidden_detour_target is not None:
++                return self.forbidden_detour_target
++
+         if self.use_planner_local_target and self.planner_local_target_as_destination:
+             planner_target = self.get_fresh_planner_target()
+             if planner_target is not None:
+@@ -983,6 +1285,41 @@ class TeknofestRouteAgentNode(Node):
+         control.brake = self.clamp(brake, 0.25, 0.65)
+         return control
+ 
++    def apply_forbidden_turn_steer_guard(self, control):
++        """
++        BasicAgent bazen detour destination verilse bile kavşakta eski rotaya doğru
++        sağa/sola kırabiliyor. Yasak dönüş aktifken fiziksel direksiyon emniyeti uygula.
++
++        CARLA'da pozitif steer sağa, negatif steer sola döner.
++        """
++        try:
++            if self.forbidden_turn_request is None:
++                return ""
++
++            if not self.forbidden_turn_is_active():
++                return ""
++
++            forbidden = str(self.forbidden_turn_request.get("forbidden_turn", "")).lower().strip()
++            sign_type = str(self.forbidden_turn_request.get("sign_type", "unknown"))
++
++            if forbidden == "right" and float(control.steer) > 0.03:
++                old = float(control.steer)
++                control.steer = min(0.02, old)
++                return f"forbidden_right_steer_guard:{sign_type}:{old:.2f}->0.02"
++
++            if forbidden == "left" and float(control.steer) < -0.03:
++                old = float(control.steer)
++                control.steer = max(-0.02, old)
++                return f"forbidden_left_steer_guard:{sign_type}:{old:.2f}->-0.02"
++
++            # straight/no_entry için direksiyonu fiziksel olarak zorlamıyoruz.
++            # Bu iş detour destination ile çözülmeli. Aksi halde kavşakta/ışıkta
++            # yanlış pozitif "girişi olmayan yol" algısı aracı sağa itebilir.
++            return ""
++
++        except Exception as exc:
++            return f"forbidden_steer_guard_error:{exc}"
++
+     def normalize_carla_tl_state(self, raw_state):
+         if raw_state is None:
+             return "unknown"
+@@ -1073,6 +1410,13 @@ class TeknofestRouteAgentNode(Node):
+         if stage == "PARKING":
+             return self.parking_speed_mps, "parking_slow"
+ 
++        if (
++            self.forbidden_turn_request is not None
++            and time.time() < self.forbidden_turn_until
++            and self.forbidden_detour_target is None
++        ):
++            return 0.0, f"forbidden_turn_no_safe_detour:{self.forbidden_turn_request.get('sign_type')}"
++
+         if False and self.ignore_decision_for_mission_test:
+             target_speed = self.go_speed_mps
+         else:
+@@ -1150,7 +1494,11 @@ class TeknofestRouteAgentNode(Node):
+                 return self.slow_speed_mps, f"decision_slow:{reason}"
+ 
+             try:
+-                target_speed = float(self.latest_decision.get("target_speed", self.go_speed_mps))
++                if self.latest_decision.get("target_speed_kmh") is not None:
++                    target_speed = self.kmh_to_mps(self.latest_decision.get("target_speed_kmh"))
++                    reason = f"{reason}|decision_speed_kmh:{float(self.latest_decision.get('target_speed_kmh')):.1f}"
++                else:
++                    target_speed = float(self.latest_decision.get("target_speed", self.go_speed_mps))
+             except Exception:
+                 target_speed = self.go_speed_mps
+ 
+@@ -1182,11 +1530,17 @@ class TeknofestRouteAgentNode(Node):
+             planner_target = self.get_fresh_planner_target()
+             if planner_target is not None:
+                 speed_hint = planner_target.get("speed_hint_mps")
++                if planner_target.get("speed_hint_kmh") is not None:
++                    try:
++                        speed_hint = self.kmh_to_mps(planner_target.get("speed_hint_kmh"))
++                    except Exception:
++                        pass
++
+                 if speed_hint is not None:
+                     try:
+                         speed_hint = float(speed_hint)
+                         target_speed = min(float(target_speed), speed_hint)
+-                        reason = f"{reason}|planner_speed_hint:{speed_hint:.2f}"
++                        reason = f"{reason}|planner_speed_hint:{self.mps_to_kmh(speed_hint):.1f}kmh/{speed_hint:.2f}mps"
+                     except Exception:
+                         pass
+ 
+@@ -1239,6 +1593,10 @@ class TeknofestRouteAgentNode(Node):
+                 basic_steer = self.clamp(control.steer, -self.max_steer, self.max_steer)
+                 control.steer = self.apply_lane_assist_to_steer(basic_steer, target_speed)
+ 
++                forbidden_steer_reason = self.apply_forbidden_turn_steer_guard(control)
++                if forbidden_steer_reason:
++                    reason = f"{reason}|{forbidden_steer_reason}"
++
+                 # SMOOTH_LONGITUDINAL_FIX:
+                 # BasicAgent steer iyi ama düşük hızda gaz/fren zıplatıyor.
+                 # Bu yüzden direksiyon BasicAgent'ten, throttle/brake yumuşak hız kontrolünden geliyor.
+@@ -1316,6 +1674,9 @@ class TeknofestRouteAgentNode(Node):
+             "brake": round(control.brake, 3),
+             "steer": round(control.steer, 3),
+             "route_status": self.route_status,
++            "forbidden_turn_active": self.forbidden_turn_is_active(),
++            "forbidden_turn_request": self.forbidden_turn_request,
++            "forbidden_detour_target": self.forbidden_detour_target,
+             "planner_enabled": self.use_planner_local_target,
+             "planner_target_fresh": self.get_fresh_planner_target() is not None,
+             "planner_target_age_s": round(time.time() - self.last_local_target_time, 3)

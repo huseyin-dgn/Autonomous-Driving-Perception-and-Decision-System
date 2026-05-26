@@ -1600,34 +1600,6 @@ class TeknofestRouteAgentNode(Node):
                 self.last_carla_tl_state = tl_state
                 self.last_carla_tl_at_light = at_tl
 
-            # TL_ROUTE_MISSION_FIX_V2_MISSING_INSERT:
-            # Decision tarafı kırmızı STOP verdi ama CARLA ego henüz ışık trigger alanında değilse
-            # aracı çok uzakta çakma; düşük hızla çizgiye yaklaş.
-            # CARLA at_light red olduğunda yukarıdaki carla_tl_red yine final STOP verir.
-            if decision == "STOP" and self.is_traffic_light_stop_reason(reason):
-                now3 = time.time()
-                red_elapsed = now3 - float(self.decision_tl_red_since or now3)
-
-                try:
-                    at_light_now = bool(getattr(self, "last_carla_tl_at_light", False))
-                    carla_state_now = str(getattr(self, "last_carla_tl_state", "unknown")).lower()
-                except Exception:
-                    at_light_now = False
-                    carla_state_now = "unknown"
-
-                if (
-                    self.tl_decision_red_early_creep_enabled
-                    and red_elapsed <= float(self.tl_decision_red_early_creep_max_s)
-                    and not (at_light_now and carla_state_now == "red")
-                    and self.get_speed() < max(2.2, float(self.tl_decision_red_early_creep_speed_mps) + 0.8)
-                ):
-                    creep_speed = self.clamp(
-                        self.tl_decision_red_early_creep_speed_mps,
-                        0.30,
-                        min(self.slow_speed_mps, 1.20),
-                    )
-                    return creep_speed, f"decision_red_early_creep:{red_elapsed:.1f}s:{reason}"
-
             if decision == "STOP":
                 return 0.0, f"decision_stop:{reason}"
 

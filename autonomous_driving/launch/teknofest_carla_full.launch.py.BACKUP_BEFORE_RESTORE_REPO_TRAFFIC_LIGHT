@@ -310,13 +310,6 @@ def generate_launch_description():
                         "forbidden_turn_sign_max_distance_m": 35.0,
                         "forbidden_turn_hold_seconds": 45.0,
 
-                        # Girişi olmayan yol / taşıt giremez sadece gerçekten önümüzdeyse rota değiştirir.
-                        "no_entry_relevance_filter_enabled": True,
-                        "no_entry_max_distance_m": 18.0,
-                        "no_entry_min_bottom_ratio": 0.42,
-                        "no_entry_min_cx_ratio": 0.35,
-                        "no_entry_max_cx_ratio": 0.65,
-
                         "lane_center_tolerance_ratio": 0.18,
                     }],
                 ),
@@ -451,8 +444,8 @@ def generate_launch_description():
                         "decision_topic": "/adas/decision_safe",
                         "green_release_boost_s": 2.5,
                         "green_release_speed_mps": 8.33,
-                        "post_tl_ignore_s": 0.0,
-                        "ignore_vision_red_when_carla_not_red": False,
+                        "post_tl_ignore_s": 1.0,
+                        "ignore_vision_red_when_carla_not_red": True,
                         "carla_tl_override_enabled": True,
                         "mission_topic": "/adas/teknofest/mission",
                         "max_speed_mps": 8.80,

@@ -49,12 +49,6 @@ class TeknofestMissionNode(Node):
         # Simülasyonda sensör/BasicAgent dalgalanması için launch tarafında 2-3 m verilebilir.
         self.declare_parameter("point_pass_tolerance_m", 1.0)
 
-        # TL_ROUTE_MISSION_FIX_V2:
-        # Launch'ta point_pass_tolerance 3m verilince ışık/kavşak çevresinde yolcu durağı
-        # erken başlıyor. Görev/task duruşu için daha sıkı tolerans kullan.
-        self.declare_parameter("task_stop_tolerance_m", 1.15)
-        self.declare_parameter("park_entry_tolerance_m", -1.0)
-
         # Yolcu indirme/bindirme şartname aralığı.
         self.declare_parameter("passenger_stop_min_s", 15.0)
         self.declare_parameter("passenger_stop_max_s", 20.0)
@@ -83,10 +77,6 @@ class TeknofestMissionNode(Node):
         self.event_topic = str(self.get_parameter("event_topic").value)
 
         self.point_pass_tolerance_m = float(self.get_parameter("point_pass_tolerance_m").value)
-        self.task_stop_tolerance_m = float(self.get_parameter("task_stop_tolerance_m").value)
-        self.park_entry_tolerance_m = float(self.get_parameter("park_entry_tolerance_m").value)
-        if self.park_entry_tolerance_m < 0.0:
-            self.park_entry_tolerance_m = self.point_pass_tolerance_m
         self.passenger_stop_min_s = float(self.get_parameter("passenger_stop_min_s").value)
         self.passenger_stop_max_s = float(self.get_parameter("passenger_stop_max_s").value)
         self.park_time_limit_s = float(self.get_parameter("park_time_limit_s").value)
@@ -411,10 +401,10 @@ class TeknofestMissionNode(Node):
                     else:
                         self.stage = "GO_TO_TASK"
 
-                elif kind == "task" and dist <= self.task_stop_tolerance_m:
+                elif kind == "task" and dist <= self.point_pass_tolerance_m:
                     self.start_passenger_stop(target, dist, now)
 
-                elif kind == "park" and dist <= self.park_entry_tolerance_m:
+                elif kind == "park" and dist <= self.point_pass_tolerance_m:
                     self.start_parking_stage(target, dist, now)
 
             elif self.stage == "PASSENGER_STOP":

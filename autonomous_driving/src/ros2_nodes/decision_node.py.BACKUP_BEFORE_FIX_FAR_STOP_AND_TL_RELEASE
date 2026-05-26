@@ -694,54 +694,6 @@ class DecisionNode(Node):
             return False, "no_stop_sign"
 
         sign_type = str(active_sign.get("sign_type", "unknown"))
-        # DUR_STOP_DISABLE_KEEP_FORBIDDEN:
-        # DUR levhası şu an trafik ışığı sahnesinde false-positive STOP üretiyor.
-        # Sağa/sola dönülmez ve hız tabelaları etkilenmez; sadece dur STOP'u kapalı.
-        if sign_type == "dur":
-            try:
-                active_sign["stop_sign_rejected"] = "dur_stop_disabled_keep_forbidden"
-            except Exception:
-                pass
-            return False, "dur_stop_disabled_keep_forbidden"
-
-
-        # FAR_STOP_SIGN_FILTER:
-        # Logda araç çok uzakta, görüntünün üst kısmındaki minik/kararsız levhayı
-        # dur gibi okuyup gereksiz STOP üretti.
-        # DUR levhası ancak yakın/güvenilir/geometrik olarak yeterliyse STOP sayılır.
-        if sign_type == "dur":
-            try:
-                sign_conf = float(active_sign.get("sign_confidence", active_sign.get("confidence", 0.0)) or 0.0)
-            except Exception:
-                sign_conf = 0.0
-
-            try:
-                bottom_ratio = float(active_sign.get("bottom_ratio", 0.0) or 0.0)
-            except Exception:
-                bottom_ratio = 0.0
-
-            try:
-                area_ratio = float(active_sign.get("area_ratio", 0.0) or 0.0)
-            except Exception:
-                area_ratio = 0.0
-
-            # Bu eşikler özellikle false positive'i kesmek için:
-            # - logdaki yanlış dur levhası görüntünün üst/uzak bölgesindeydi
-            # - gerçek yakın DUR daha büyük ve daha aşağıda olur
-            if sign_conf < 0.55:
-                active_sign["stop_sign_rejected"] = "low_sign_conf"
-                active_sign["stop_sign_reject_detail"] = f"conf={sign_conf:.3f}<0.55"
-                return False, f"stop_sign_rejected_low_conf:dur:{sign_conf:.3f}"
-
-            if bottom_ratio < 0.32:
-                active_sign["stop_sign_rejected"] = "too_far_top"
-                active_sign["stop_sign_reject_detail"] = f"bottom={bottom_ratio:.3f}<0.32"
-                return False, f"stop_sign_rejected_too_far:dur:bottom={bottom_ratio:.3f}"
-
-            if area_ratio < 0.00045:
-                active_sign["stop_sign_rejected"] = "too_small"
-                active_sign["stop_sign_reject_detail"] = f"area={area_ratio:.6f}<0.00045"
-                return False, f"stop_sign_rejected_too_small:dur:area={area_ratio:.6f}"
 
         if now < self.stop_sign_hold_until:
             active_sign["stop_sign_state"] = "holding"

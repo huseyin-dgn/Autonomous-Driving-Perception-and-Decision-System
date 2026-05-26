@@ -1,0 +1,54 @@
+988f569 HEAD@{2026-05-25 05:09:31 +0300}: checkout: moving from refactor/modular-decision-stack to refactor/modular-decision-stack
+988f569 HEAD@{2026-05-25 05:08:42 +0300}: checkout: moving from main to refactor/modular-decision-stack
+988f569 HEAD@{2026-05-24 19:47:48 +0300}: reset: moving to 988f5696fd5ab6672273eb8315b54c2a0fc42a72
+8e69bd5 HEAD@{2026-05-24 19:47:48 +0300}: checkout: moving from restore-988f5696 to main
+988f569 HEAD@{2026-05-24 19:47:48 +0300}: reset: moving to HEAD
+988f569 HEAD@{2026-05-24 19:47:04 +0300}: reset: moving to 988f5696fd5ab6672273eb8315b54c2a0fc42a72
+988f569 HEAD@{2026-05-24 19:28:16 +0300}: checkout: moving from main to restore-988f5696
+8e69bd5 HEAD@{2026-05-24 19:28:16 +0300}: reset: moving to HEAD
+8e69bd5 HEAD@{2026-05-24 18:12:31 +0300}: commit: Add TrafficLightDecisionGateNode for traffic light decision making
+4345982 HEAD@{2026-05-24 16:34:11 +0300}: commit: Implement smooth spectator camera follow for Teknofest simulation
+76c5ec6 HEAD@{2026-05-24 03:04:34 +0300}: commit: Refactor code structure for improved readability and maintainability
+988f569 HEAD@{2026-05-23 20:35:57 +0300}: commit: geojson yarışmaya göre düzenlendi rota oluşturma eklendi
+3b21803 HEAD@{2026-05-23 18:55:36 +0300}: commit: tabelalar tamamlandı yol çalışması eklendi
+6a336d1 HEAD@{2026-05-22 22:03:01 +0300}: commit: tabelalar eklenmeye başlandı
+ab0d0f2 HEAD@{2026-05-22 01:16:24 +0300}: commit: rota düzenlendi
+a2b7425 HEAD@{2026-05-21 18:00:17 +0300}: commit: hız test için yükseltildi
+65457c1 HEAD@{2026-05-20 19:20:24 +0300}: commit: tabelalar spawn edildi town_03'e geçiş yapıldı
+e873644 HEAD@{2026-05-17 18:19:44 +0300}: pull --tags origin main: Fast-forward
+b67d6e2 HEAD@{2026-05-17 18:08:16 +0300}: pull --tags origin main: Fast-forward
+76c87da HEAD@{2026-05-15 17:03:05 +0300}: commit: görev mapp'i genişletildi
+ced8d6b HEAD@{2026-05-15 15:20:59 +0300}: commit: kırmızı ışıklarda durup kalkma iyileştirildi ani frenler önlendi
+886dbe1 HEAD@{2026-05-15 13:20:04 +0300}: commit: araç hızlanması iyileştirildi
+e7b5007 HEAD@{2026-05-15 11:24:55 +0300}: pull --tags origin main: Fast-forward
+70e5f7b HEAD@{2026-05-14 20:01:21 +0300}: commit: simülasyon ortamı eklendi
+f122f16 HEAD@{2026-05-14 17:52:04 +0300}: commit: dosya temizliği yapıldı
+1b50dcc HEAD@{2026-05-13 18:11:10 +0300}: commit: SEnaryo kuruömları ve perception node iyileştirmesi.
+bdb515f HEAD@{2026-05-13 01:16:17 +0300}: commit: Carla simülasyon eklentisi yapıldı.Aynı zamanda insan , trafik ışığı ve motorsiklet ortamları kurulup test edildi.Bu değişiklikler sonucunda sistem test aşamasına geçiş yaptı
+b1e1a20 HEAD@{2026-05-06 14:58:46 +0300}: commit: Clean ADAS project structure and add CARLA perception updates
+8de0dea HEAD@{2026-05-06 14:56:28 +0300}: reset: moving to HEAD
+8de0dea HEAD@{2026-05-01 22:41:38 +0300}: checkout: moving from cf75198c2d99e5ff82a1b59d2f94749b2ed19e21 to main
+cf75198 HEAD@{2026-05-01 22:40:00 +0300}: checkout: moving from main to cf75198c2d99e5ff82a1b59d2f94749b2ed19e21
+8de0dea HEAD@{2026-05-01 22:39:47 +0300}: reset: moving to HEAD
+8de0dea HEAD@{2026-05-01 00:58:42 +0300}: commit: Add ADAS Gazebo test scenarios and update decision logic
+cdfb797 HEAD@{2026-04-26 15:31:21 +0300}: pull --rebase origin main (finish): returning to refs/heads/main
+cdfb797 HEAD@{2026-04-26 15:31:21 +0300}: pull --rebase origin main (pick): Karar paneli eklendi ve hedef hiza gore kontrol guncellendi
+770f047 HEAD@{2026-04-26 15:31:21 +0300}: pull --rebase origin main (start): checkout 770f047650f9e3be8c52db93ba0d9d7540b7af60
+845a4ab HEAD@{2026-04-26 15:30:34 +0300}: commit: Karar paneli eklendi ve hedef hiza gore kontrol guncellendi
+632871e HEAD@{2026-04-26 14:46:07 +0300}: pull --tags origin main: Fast-forward
+5320725 HEAD@{2026-04-26 02:35:57 +0300}: commit: git commit -m "Add traffic sign classification and speed limit simulation model"
+0a9bf48 HEAD@{2026-04-26 00:44:38 +0300}: pull --tags origin main: Fast-forward
+07678ae HEAD@{2026-04-25 15:13:20 +0300}: commit: Cleaning
+438d16f HEAD@{2026-04-25 15:12:05 +0300}: pull --rebase origin main (finish): returning to refs/heads/main
+438d16f HEAD@{2026-04-25 15:12:05 +0300}: pull --rebase origin main (pick): Add portable traffic sign and green light simulation models
+631e74a HEAD@{2026-04-25 15:12:05 +0300}: pull --rebase origin main (start): checkout 631e74a9baff49c551f61d03998e60b2dcd3b6ab
+310ce6f HEAD@{2026-04-25 15:08:28 +0300}: commit: Add portable traffic sign and green light simulation models
+4e718d4 HEAD@{2026-04-24 21:56:50 +0300}: commit: enter image
+453f65e HEAD@{2026-04-24 21:55:57 +0300}: commit: Insert : Trafik ışığı algılama kısımları eklendi. Sdf dosyaları ayarlandı.
+2eebec1 HEAD@{2026-04-24 21:14:12 +0300}: commit: Insert : İnsan algılama kısımları gazeboya entegre edildi.Daha doğru sonuçlar için eğitim gerekli.
+aa39e45 HEAD@{2026-04-20 11:21:35 +0300}: pull --rebase origin main (finish): returning to refs/heads/main
+aa39e45 HEAD@{2026-04-20 11:21:35 +0300}: pull --rebase origin main (pick): fix : gazebo sim ve .py düzenlemeleri
+e13890e HEAD@{2026-04-20 11:21:35 +0300}: pull --rebase origin main (start): checkout e13890e4748b591ed311c5599c32f07063e1d5a2
+4165bf7 HEAD@{2026-04-20 11:15:39 +0300}: commit: fix : gazebo sim ve .py düzenlemeleri
+56d4af7 HEAD@{2026-04-19 17:33:52 +0300}: commit: Autonomous driving proje dosyalari guncellendi
+75aba8f HEAD@{2026-04-19 17:17:09 +0300}: clone: from https://github.com/huseyin-dgn/Autonomous-Driving-Perception-and-Decision-System.git

@@ -52,13 +52,6 @@ class TeknofestRouteAgentNode(Node):
         self.declare_parameter("slow_speed_mps", 1.4)
         self.declare_parameter("parking_speed_mps", 0.65)
 
-        # İnsan/launch tarafı km/h. Verilirse m/s değerlerini override eder.
-        self.declare_parameter("max_speed_kmh", -1.0)
-        self.declare_parameter("go_speed_kmh", -1.0)
-        self.declare_parameter("slow_speed_kmh", -1.0)
-        self.declare_parameter("parking_speed_kmh", -1.0)
-        self.declare_parameter("green_release_speed_kmh", -1.0)
-
         # BasicAgent direksiyonu kendi üretir. Bunu çok düşük tutarsan araç dönemiyor.
         self.declare_parameter("max_steer", 0.70)
         self.declare_parameter("lane_assist_enabled", True)
@@ -77,25 +70,10 @@ class TeknofestRouteAgentNode(Node):
         # Simülasyonda vision yanlış kırmızıya kilitlenirse CARLA'nın gerçek
         # trafik ışığı state'i ile emniyetli şekilde düzelt.
         self.declare_parameter("carla_tl_override_enabled", True)
-        self.declare_parameter("ignore_vision_red_when_carla_not_red", False)
-        self.declare_parameter("post_tl_ignore_s", 0.0)
+        self.declare_parameter("ignore_vision_red_when_carla_not_red", True)
+        self.declare_parameter("post_tl_ignore_s", 7.0)
         self.declare_parameter("green_release_speed_mps", 4.0)
         self.declare_parameter("green_release_boost_s", 2.5)
-
-        # TL_CREEP_AND_GREEN_RELEASE:
-        # CARLA red trigger biraz erken başlıyorsa araç çizgiden fazla geride kalmasın.
-        # Decision red STOP gelene kadar kısa süre çok yavaş süzülür.
-        self.declare_parameter("carla_tl_red_creep_enabled", True)
-        self.declare_parameter("carla_tl_red_creep_s", 1.15)
-        self.declare_parameter("carla_tl_red_creep_speed_mps", 0.65)
-
-        # TL_ROUTE_MISSION_FIX_V2:
-        # Perception kırmızıyı çok uzaktan STOP'a çevirdiğinde aracı çizgiden çok önce
-        # çakmamak için CARLA light zone'a girene kadar kontrollü yaklaş.
-        self.declare_parameter("tl_decision_red_early_creep_enabled", True)
-        self.declare_parameter("tl_decision_red_early_creep_speed_mps", 0.85)
-        self.declare_parameter("tl_decision_red_early_creep_max_s", 9.0)
-
 
         self.carla_root = self.get_parameter("carla_root").value
         self.host = self.get_parameter("host").value
@@ -189,53 +167,11 @@ class TeknofestRouteAgentNode(Node):
             self.get_parameter("green_release_boost_s").value
         )
 
-        self.carla_tl_red_creep_enabled = bool(
-            self.get_parameter("carla_tl_red_creep_enabled").value
-        )
-        self.carla_tl_red_creep_s = float(
-            self.get_parameter("carla_tl_red_creep_s").value
-        )
-        self.carla_tl_red_creep_speed_mps = float(
-            self.get_parameter("carla_tl_red_creep_speed_mps").value
-        )
-
-        self.tl_decision_red_early_creep_enabled = bool(
-            self.get_parameter("tl_decision_red_early_creep_enabled").value
-        )
-        self.tl_decision_red_early_creep_speed_mps = float(
-            self.get_parameter("tl_decision_red_early_creep_speed_mps").value
-        )
-        self.tl_decision_red_early_creep_max_s = float(
-            self.get_parameter("tl_decision_red_early_creep_max_s").value
-        )
-
-        # km/h parametreleri verilirse iç m/s değerlerini burada override et.
-        self.max_speed_kmh = float(self.get_parameter("max_speed_kmh").value)
-        self.go_speed_kmh = float(self.get_parameter("go_speed_kmh").value)
-        self.slow_speed_kmh = float(self.get_parameter("slow_speed_kmh").value)
-        self.parking_speed_kmh = float(self.get_parameter("parking_speed_kmh").value)
-        self.green_release_speed_kmh = float(self.get_parameter("green_release_speed_kmh").value)
-
-        if self.max_speed_kmh >= 0.0:
-            self.max_speed_mps = self.kmh_to_mps(self.max_speed_kmh)
-        if self.go_speed_kmh >= 0.0:
-            self.go_speed_mps = self.kmh_to_mps(self.go_speed_kmh)
-        if self.slow_speed_kmh >= 0.0:
-            self.slow_speed_mps = self.kmh_to_mps(self.slow_speed_kmh)
-        if self.parking_speed_kmh >= 0.0:
-            self.parking_speed_mps = self.kmh_to_mps(self.parking_speed_kmh)
-        if self.green_release_speed_kmh >= 0.0:
-            self.green_release_speed_mps = self.kmh_to_mps(self.green_release_speed_kmh)
-
         self.last_carla_tl_state = "unknown"
         self.last_carla_tl_at_light = False
         self.post_tl_ignore_until = 0.0
         self.green_release_until = 0.0
-        self.carla_tl_red_since = 0.0
 
-        # Decision tarafındaki TL geçişini ayrıca takip et.
-        self.last_decision_tl_state = "unknown"
-        self.decision_tl_red_since = 0.0
         self.carla = load_carla(self.carla_root)
         self.client = self.carla.Client(self.host, self.port)
         self.client.set_timeout(self.timeout)
@@ -254,13 +190,6 @@ class TeknofestRouteAgentNode(Node):
             "target_speed": 0.0,
             "reason": "initial",
         }
-
-        # Yasak dönüş/girilmez levhası gelince geçici lokal detour hedefi.
-        self.forbidden_turn_request = None
-        self.forbidden_turn_until = 0.0
-        self.forbidden_detour_target = None
-        self.last_forbidden_turn_key = None
-
         self.latest_mission = None
         self.last_decision_time = 0.0
         self.last_mission_time = 0.0
@@ -368,311 +297,11 @@ class TeknofestRouteAgentNode(Node):
             except Exception as exc:
                 self.get_logger().warning(f"offlane person filter hata: {exc}")
 
-            # TL_ROUTE_MISSION_FIX_V2:
-            # Decision red->green geçişini route agent seviyesinde takip et.
-            # Böylece yeşilde target_smooth 0'dan gıdım gıdım başlamaz.
-            try:
-                tl_state = str(
-                    data.get(
-                        "traffic_light_state",
-                        data.get("traffic_light", data.get("tl_state", "unknown")),
-                    )
-                ).lower().strip()
-
-                if tl_state not in {"red", "yellow", "green"}:
-                    reason_l = str(data.get("reason", "")).lower()
-                    if "red_light" in reason_l or "traffic_light_red" in reason_l:
-                        tl_state = "red"
-                    elif "yellow_light" in reason_l or "traffic_light_yellow" in reason_l:
-                        tl_state = "yellow"
-                    else:
-                        tl_state = "unknown"
-
-                now_dec = time.time()
-
-                if tl_state == "red" and self.last_decision_tl_state != "red":
-                    self.decision_tl_red_since = now_dec
-
-                if tl_state == "green" and self.last_decision_tl_state in {"red", "yellow"}:
-                    self.green_release_until = now_dec + max(1.0, float(self.green_release_boost_s))
-                    try:
-                        release_floor = self.clamp(
-                            float(self.green_release_speed_mps),
-                            1.5,
-                            self.max_speed_mps,
-                        )
-                        self.last_smoothed_target_speed_mps = max(
-                            float(self.get_speed()),
-                            min(float(release_floor), float(self.go_speed_mps)),
-                        )
-                        self.last_smoothed_target_time = now_dec
-                    except Exception:
-                        pass
-
-                if tl_state in {"red", "yellow", "green"}:
-                    self.last_decision_tl_state = tl_state
-            except Exception as exc:
-                self.get_logger().warning(f"decision TL state takip hatası: {exc}")
-
             self.latest_decision = data
             self.last_decision_time = time.time()
 
-            self.update_forbidden_turn_from_decision(data)
-
         except Exception as exc:
             self.get_logger().warning(f"decision parse hatası: {exc}")
-
-    def angle_norm_deg(self, angle):
-        return (float(angle) + 180.0) % 360.0 - 180.0
-
-    def classify_relative_turn_to_location(self, ego_tf, loc):
-        try:
-            ego_loc = ego_tf.location
-            fwd = ego_tf.get_forward_vector()
-            right = ego_tf.get_right_vector()
-
-            vx = float(loc.x) - float(ego_loc.x)
-            vy = float(loc.y) - float(ego_loc.y)
-
-            forward_dot = vx * float(fwd.x) + vy * float(fwd.y)
-            right_dot = vx * float(right.x) + vy * float(right.y)
-
-            angle_deg = math.degrees(math.atan2(right_dot, max(0.001, forward_dot)))
-
-            if angle_deg > 25.0:
-                return "right", angle_deg
-            if angle_deg < -25.0:
-                return "left", angle_deg
-            return "straight", angle_deg
-
-        except Exception:
-            return "unknown", 0.0
-
-    def forbidden_turn_is_active(self):
-        """
-        Yasak dönüş isteği süre doldu diye kavşak üstünde unutulmamalı.
-
-        Eski davranış:
-          - saga_donulmez kırmızı ışıkta görülüyor
-          - araç kırmızıda beklerken 12s hold süresi doluyor
-          - yeşilde yasak unutulup ana hedefe sağdan gidilebiliyor
-
-        Yeni davranış:
-          - Detour hedefi varsa hedefe yaklaşana kadar aktif tut
-          - Süre dolduysa ama detour hâlâ geçilmediyse süreyi küçük adımlarla uzat
-        """
-        now = time.time()
-
-        if self.forbidden_turn_request is None:
-            return False
-
-        if self.forbidden_detour_target is not None:
-            try:
-                detour_loc = self.carla.Location(
-                    x=float(self.forbidden_detour_target["carla_x"]),
-                    y=float(self.forbidden_detour_target["carla_y"]),
-                    z=float(self.forbidden_detour_target.get("carla_z", 0.2)),
-                )
-                d = self.distance_to_location(detour_loc)
-
-                if d is not None and d <= 5.5:
-                    self.clear_forbidden_turn(f"detour_reached:{d:.1f}m")
-                    return False
-
-                # Süre doldu ama detour geçilmediyse aktif tut.
-                if now > self.forbidden_turn_until:
-                    self.forbidden_turn_until = now + 2.0
-
-                return True
-
-            except Exception:
-                # Detour hedefi parse edilemiyorsa süre kontrolüne düş.
-                pass
-
-        if now > self.forbidden_turn_until:
-            self.clear_forbidden_turn("expired_no_detour")
-            return False
-
-        return True
-
-    def clear_forbidden_turn(self, reason):
-        if self.forbidden_turn_request is not None:
-            self.get_logger().info(f"FORBIDDEN_TURN_CLEAR reason={reason}")
-
-        self.forbidden_turn_request = None
-        self.forbidden_turn_until = 0.0
-        self.forbidden_detour_target = None
-        self.last_forbidden_turn_key = None
-        self.active_target_key = None
-
-    def make_forbidden_turn_detour(self, request):
-        """
-        CARLA haritasında ego önündeki branch'leri dener ve yasak olmayan
-        bir lokal hedef seçer. Bu BasicAgent destination'ı geçici olarak değiştirir.
-        Böylece saga_donulmez varken sağ branch'e, sola_donulmez varken sol branch'e girmez.
-        """
-        try:
-            forbidden = str(request.get("forbidden_turn", "")).lower().strip()
-            sign_type = str(request.get("sign_type", "unknown"))
-
-            ego_tf = self.ego.get_transform()
-            ego_loc = ego_tf.location
-
-            start_wp = self.map.get_waypoint(
-                ego_loc,
-                project_to_road=True,
-                lane_type=self.carla.LaneType.Driving,
-            )
-
-            if start_wp is None:
-                return None
-
-            if forbidden == "right":
-                blocked = {"right"}
-                preference = {"straight": 0, "left": 1, "right": 99, "unknown": 50}
-            elif forbidden == "left":
-                blocked = {"left"}
-                preference = {"straight": 0, "right": 1, "left": 99, "unknown": 50}
-            elif forbidden in {"straight", "no_entry"}:
-                blocked = {"straight"}
-                preference = {"right": 0, "left": 0, "straight": 99, "unknown": 50}
-            else:
-                return None
-
-            candidates = []
-            step_m = 7.0
-            frontier = [(start_wp, 0.0)]
-            visited = set()
-
-            for _depth in range(8):
-                new_frontier = []
-
-                for wp, dist_m in frontier:
-                    try:
-                        next_list = wp.next(step_m)
-                    except Exception:
-                        next_list = []
-
-                    for nxt in next_list:
-                        try:
-                            key = (
-                                int(getattr(nxt, "road_id", 0)),
-                                int(getattr(nxt, "lane_id", 0)),
-                                int(round(float(nxt.transform.location.x))),
-                                int(round(float(nxt.transform.location.y))),
-                            )
-                        except Exception:
-                            key = None
-
-                        if key is not None and key in visited:
-                            continue
-
-                        if key is not None:
-                            visited.add(key)
-
-                        total_d = float(dist_m) + step_m
-                        loc = nxt.transform.location
-                        turn, angle = self.classify_relative_turn_to_location(ego_tf, loc)
-
-                        if total_d >= 22.0:
-                            if turn not in blocked:
-                                pref = preference.get(turn, 50)
-                                # Düz gitmek genelde en güvenli; çok keskin açıları sona at.
-                                angle_penalty = abs(float(angle)) * 0.01
-                                score = pref + angle_penalty + abs(total_d - 32.0) * 0.02
-                                candidates.append((score, nxt, turn, angle, total_d))
-
-                        if total_d <= 55.0:
-                            new_frontier.append((nxt, total_d))
-
-                frontier = new_frontier[:24]
-
-            if not candidates:
-                self.get_logger().warning(
-                    f"FORBIDDEN_TURN_DETOUR_NOT_FOUND sign={sign_type} forbidden={forbidden}"
-                )
-                return None
-
-            candidates.sort(key=lambda x: x[0])
-            _score, best_wp, turn, angle, total_d = candidates[0]
-            loc = best_wp.transform.location
-
-            target = {
-                "name": f"forbidden_detour_{sign_type}_{forbidden}_{turn}",
-                "description": f"Temporary detour for {sign_type}; forbidden={forbidden}; selected={turn}",
-                "carla_x": float(loc.x),
-                "carla_y": float(loc.y),
-                "carla_z": float(loc.z),
-                "carla_yaw": float(best_wp.transform.rotation.yaw),
-                "lat": float(loc.y),
-                "lon": float(loc.x),
-                "kind": "forbidden_turn_detour",
-                "forbidden_turn": forbidden,
-                "selected_turn": turn,
-                "selected_angle_deg": round(float(angle), 2),
-                "detour_distance_m": round(float(total_d), 2),
-                "sign_type": sign_type,
-            }
-
-            self.get_logger().warning(
-                "FORBIDDEN_TURN_DETOUR_SET "
-                f"sign={sign_type} forbidden={forbidden} selected={turn} "
-                f"angle={angle:.1f} dist={total_d:.1f} "
-                f"dest=({loc.x:.2f},{loc.y:.2f},{loc.z:.2f})"
-            )
-
-            return target
-
-        except Exception as exc:
-            self.get_logger().warning(f"FORBIDDEN_TURN_DETOUR_FAILED: {exc}")
-            return None
-
-    def update_forbidden_turn_from_decision(self, data):
-        req = data.get("route_replan_request")
-
-        if not isinstance(req, dict) or not bool(req.get("active", False)):
-            return
-
-        forbidden = str(req.get("forbidden_turn", "")).lower().strip()
-        if forbidden not in {"right", "left", "straight", "no_entry"}:
-            return
-
-        sign_type = str(req.get("sign_type", "unknown"))
-        distance_m = req.get("distance_m", None)
-
-        try:
-            distance_key = round(float(distance_m), 1) if distance_m is not None else -1.0
-        except Exception:
-            distance_key = -1.0
-
-        key = f"{sign_type}|{forbidden}|{distance_key}"
-
-        now = time.time()
-        hold_s = float(req.get("hold_seconds", 12.0) or 12.0)
-
-        # Aynı isteği sürekli geliyorsa destination'ı her frame resetleme.
-        if (
-            self.last_forbidden_turn_key == key
-            and self.forbidden_turn_request is not None
-            and now < self.forbidden_turn_until
-        ):
-            self.forbidden_turn_until = max(self.forbidden_turn_until, now + hold_s)
-            return
-
-        detour = self.make_forbidden_turn_detour(req)
-
-        self.forbidden_turn_request = dict(req)
-        self.forbidden_turn_until = now + hold_s
-        self.forbidden_detour_target = detour
-        self.last_forbidden_turn_key = key
-
-        # BasicAgent yeni detour hedefini hemen alsın.
-        self.active_target_key = None
-
-        if detour is None:
-            self.get_logger().warning(
-                f"FORBIDDEN_TURN_ACTIVE_BUT_NO_DETOUR sign={sign_type} forbidden={forbidden}"
-            )
 
     def mission_cb(self, msg):
         try:
@@ -831,12 +460,6 @@ class TeknofestRouteAgentNode(Node):
         except Exception:
             return 0.0
 
-    def kmh_to_mps(self, value):
-        try:
-            return float(value) / 3.6
-        except Exception:
-            return 0.0
-
     def apply_planner_speed_hint_cap(self, target_speed, reason):
         """
         Planner speed_hint eskiden sadece resolve_target_speed sonundaki normal dönüşte
@@ -853,13 +476,6 @@ class TeknofestRouteAgentNode(Node):
             return target_speed, reason
 
         speed_hint = planner_target.get("speed_hint_mps")
-
-        if planner_target.get("speed_hint_kmh") is not None:
-            try:
-                speed_hint = self.kmh_to_mps(planner_target.get("speed_hint_kmh"))
-            except Exception:
-                pass
-
         if speed_hint is None:
             return target_speed, reason
 
@@ -872,7 +488,7 @@ class TeknofestRouteAgentNode(Node):
         capped = min(target_speed, speed_hint)
 
         if capped < target_speed - 0.01 and "planner_speed_hint" not in str(reason):
-            reason = f"{reason}|planner_speed_hint:{speed_hint * 3.6:.1f}kmh/{speed_hint:.2f}mps"
+            reason = f"{reason}|planner_speed_hint:{speed_hint:.2f}mps/{speed_hint * 3.6:.1f}kmh"
 
         return capped, reason
 
@@ -899,21 +515,6 @@ class TeknofestRouteAgentNode(Node):
             self.last_smoothed_target_speed_mps = target_speed
             self.last_smoothed_target_time = now
             return target_speed, reason
-
-        # TL_ROUTE_MISSION_FIX_V2:
-        # Kırmızıdan yeşile geçince STOP sonrası hız 0.45 -> 1.35 -> 2.34 diye
-        # gıdım gıdım artmasın. Güvenli hedefe direkt bırak.
-        if now < float(self.green_release_until or 0.0) and target_speed > 0.20:
-            floor = min(
-                float(target_speed),
-                max(1.50, min(float(self.green_release_speed_mps), float(self.go_speed_mps))),
-            )
-            prev = float(self.last_smoothed_target_speed_mps or 0.0)
-            if prev < floor:
-                self.last_smoothed_target_speed_mps = floor
-                self.last_smoothed_target_time = now
-                reason = f"{reason}|green_release_smooth_bypass:{prev:.2f}->{floor:.2f}"
-                return floor, reason
 
         dt = now - float(self.last_smoothed_target_time or now)
         dt = self.clamp(dt, 0.02, 0.20)
@@ -970,18 +571,15 @@ class TeknofestRouteAgentNode(Node):
         """
         BasicAgent destination seçimi.
 
-        Normalde:
+        Kritik düzeltme:
+        Planner local target sürekli akan, kısa menzilli takip noktasıdır.
+        BasicAgent'a destination olarak verilirse BasicAgent rotası sürekli resetlenir
+        ve araç zıplaya zıplaya gider.
+
+        Bu yüzden varsayılan davranış:
           - BasicAgent destination = mission objective
           - Planner local target = speed_hint/debug
-
-        Yasak dönüş/girilmez levhası aktifse:
-          - BasicAgent destination = geçici lokal detour hedefi
-          - Detour geçilince ana mission objective'e geri dönülür.
         """
-        if self.forbidden_turn_is_active():
-            if self.forbidden_detour_target is not None:
-                return self.forbidden_detour_target
-
         if self.use_planner_local_target and self.planner_local_target_as_destination:
             planner_target = self.get_fresh_planner_target()
             if planner_target is not None:
@@ -1385,41 +983,6 @@ class TeknofestRouteAgentNode(Node):
         control.brake = self.clamp(brake, 0.25, 0.65)
         return control
 
-    def apply_forbidden_turn_steer_guard(self, control):
-        """
-        BasicAgent bazen detour destination verilse bile kavşakta eski rotaya doğru
-        sağa/sola kırabiliyor. Yasak dönüş aktifken fiziksel direksiyon emniyeti uygula.
-
-        CARLA'da pozitif steer sağa, negatif steer sola döner.
-        """
-        try:
-            if self.forbidden_turn_request is None:
-                return ""
-
-            if not self.forbidden_turn_is_active():
-                return ""
-
-            forbidden = str(self.forbidden_turn_request.get("forbidden_turn", "")).lower().strip()
-            sign_type = str(self.forbidden_turn_request.get("sign_type", "unknown"))
-
-            if forbidden == "right" and float(control.steer) > 0.03:
-                old = float(control.steer)
-                control.steer = min(0.02, old)
-                return f"forbidden_right_steer_guard:{sign_type}:{old:.2f}->0.02"
-
-            if forbidden == "left" and float(control.steer) < -0.03:
-                old = float(control.steer)
-                control.steer = max(-0.02, old)
-                return f"forbidden_left_steer_guard:{sign_type}:{old:.2f}->-0.02"
-
-            # straight/no_entry için direksiyonu fiziksel olarak zorlamıyoruz.
-            # Bu iş detour destination ile çözülmeli. Aksi halde kavşakta/ışıkta
-            # yanlış pozitif "girişi olmayan yol" algısı aracı sağa itebilir.
-            return ""
-
-        except Exception as exc:
-            return f"forbidden_steer_guard_error:{exc}"
-
     def normalize_carla_tl_state(self, raw_state):
         if raw_state is None:
             return "unknown"
@@ -1510,13 +1073,6 @@ class TeknofestRouteAgentNode(Node):
         if stage == "PARKING":
             return self.parking_speed_mps, "parking_slow"
 
-        if (
-            self.forbidden_turn_request is not None
-            and time.time() < self.forbidden_turn_until
-            and self.forbidden_detour_target is None
-        ):
-            return 0.0, f"forbidden_turn_no_safe_detour:{self.forbidden_turn_request.get('sign_type')}"
-
         if False and self.ignore_decision_for_mission_test:
             target_speed = self.go_speed_mps
         else:
@@ -1526,107 +1082,66 @@ class TeknofestRouteAgentNode(Node):
             decision = str(self.latest_decision.get("decision", "STOP")).upper()
             reason = str(self.latest_decision.get("reason", "unknown"))
 
-            # TL_CREEP_AND_GREEN_RELEASE_KEEP_SIGNS:
-            # Güvenlik:
-            # - Decision/perception kırmızı STOP diyorsa STOP final.
-            # - CARLA red görüp decision henüz STOP demediyse kısa süre creep yapar,
-            #   böylece çizgiden çok geride çakılı kalmaz.
-            # - CARLA green görürse stale vision/decision red bekletmesini kaldırır.
-            # Tabela/forbidden-turn kodlarına dokunmaz.
+            # CARLA_TL_GUARD_FIX:
+            # Vision red yanlış/stale kalırsa CARLA state ile şartname davranışını koru.
             if self.carla_tl_override_enabled:
                 tl_guard = self.get_carla_tl_guard_state()
                 at_tl = bool(tl_guard.get("at_light", False))
                 tl_state = str(tl_guard.get("state", "unknown")).lower()
                 tl_reason = self.is_traffic_light_stop_reason(reason)
+
                 now2 = time.time()
 
-                prev_tl_state = str(self.last_carla_tl_state or "unknown").lower()
+                # Işıktan çıkınca kısa süre yeni red tespitlerini yut.
+                if self.last_carla_tl_at_light and not at_tl:
+                    self.post_tl_ignore_until = now2 + self.post_tl_ignore_s
 
-                if at_tl and tl_state == "red":
-                    if prev_tl_state != "red" or self.carla_tl_red_since <= 0.0:
-                        self.carla_tl_red_since = now2
-
-                    self.last_carla_tl_state = tl_state
-                    self.last_carla_tl_at_light = at_tl
-
-                    # Perception/decision zaten kırmızı STOP verdiyse artık süründürme yok.
-                    if decision == "STOP" and tl_reason:
-                        return 0.0, f"decision_stop:{reason}"
-
-                    # CARLA red trigger erken geldiyse kısa süre kontrollü yaklaş.
-                    creep_elapsed = now2 - float(self.carla_tl_red_since or now2)
-                    if (
-                        self.carla_tl_red_creep_enabled
-                        and creep_elapsed < self.carla_tl_red_creep_s
-                        and self.get_speed() > 0.20
-                    ):
-                        creep_speed = self.clamp(
-                            self.carla_tl_red_creep_speed_mps,
-                            0.20,
-                            min(self.slow_speed_mps, 1.0),
-                        )
-                        return creep_speed, f"carla_tl_red_creep:{creep_elapsed:.2f}s"
-
-                    return 0.0, "carla_tl_red"
-
-                if at_tl and tl_state == "yellow":
-                    self.last_carla_tl_state = tl_state
-                    self.last_carla_tl_at_light = at_tl
-                    self.carla_tl_red_since = 0.0
-                    return min(self.slow_speed_mps, 0.60), "carla_tl_yellow"
-
-                if at_tl and tl_state == "green":
-                    self.last_carla_tl_state = tl_state
-                    self.last_carla_tl_at_light = at_tl
-                    self.carla_tl_red_since = 0.0
-
-                    # Yeşilde decision hâlâ eski red STOP tutuyorsa bekleme.
-                    if decision == "STOP" and tl_reason:
-                        release_speed = self.clamp(
-                            float(self.green_release_speed_mps),
-                            1.50,
-                            self.max_speed_mps,
-                        )
-
-                        # target_smooth sıfırdan ağır ağır başlatmasın.
-                        self.last_smoothed_target_speed_mps = release_speed
-                        self.last_smoothed_target_time = now2
-
-                        return release_speed, "carla_tl_green_release"
-
-                if not at_tl:
-                    self.carla_tl_red_since = 0.0
+                # Kırmızı/sarıdan yeşile döndüyse kalkış boost'u.
+                if self.last_carla_tl_state in {"red", "yellow"} and tl_state == "green":
+                    self.green_release_until = now2 + self.green_release_boost_s
+                    self.post_tl_ignore_until = now2 + self.post_tl_ignore_s
 
                 self.last_carla_tl_state = tl_state
                 self.last_carla_tl_at_light = at_tl
 
-            # TL_ROUTE_MISSION_FIX_V2_MISSING_INSERT:
-            # Decision tarafı kırmızı STOP verdi ama CARLA ego henüz ışık trigger alanında değilse
-            # aracı çok uzakta çakma; düşük hızla çizgiye yaklaş.
-            # CARLA at_light red olduğunda yukarıdaki carla_tl_red yine final STOP verir.
-            if decision == "STOP" and self.is_traffic_light_stop_reason(reason):
-                now3 = time.time()
-                red_elapsed = now3 - float(self.decision_tl_red_since or now3)
+                if at_tl and tl_state == "red":
+                    return 0.0, "carla_tl_red"
 
-                try:
-                    at_light_now = bool(getattr(self, "last_carla_tl_at_light", False))
-                    carla_state_now = str(getattr(self, "last_carla_tl_state", "unknown")).lower()
-                except Exception:
-                    at_light_now = False
-                    carla_state_now = "unknown"
+                if at_tl and tl_state == "yellow":
+                    return min(self.slow_speed_mps, 0.60), "carla_tl_yellow"
+
+                if at_tl and tl_state == "green":
+                    if decision == "STOP" and tl_reason:
+                        return self.clamp(
+                            max(self.green_release_speed_mps, self.go_speed_mps),
+                            0.0,
+                            self.max_speed_mps,
+                        ), "carla_tl_green_release"
+
+                if now2 < self.post_tl_ignore_until and decision == "STOP" and tl_reason:
+                    return self.clamp(
+                        max(self.green_release_speed_mps, self.go_speed_mps),
+                        0.0,
+                        self.max_speed_mps,
+                    ), "post_tl_pass_ignore_vision_red"
 
                 if (
-                    self.tl_decision_red_early_creep_enabled
-                    and red_elapsed <= float(self.tl_decision_red_early_creep_max_s)
-                    and not (at_light_now and carla_state_now == "red")
-                    and self.get_speed() < max(2.2, float(self.tl_decision_red_early_creep_speed_mps) + 0.8)
+                    self.ignore_vision_red_when_carla_not_red
+                    and decision == "STOP"
+                    and tl_reason
+                    and tl_state != "red"
                 ):
-                    creep_speed = self.clamp(
-                        self.tl_decision_red_early_creep_speed_mps,
-                        0.30,
-                        min(self.slow_speed_mps, 1.20),
-                    )
-                    return creep_speed, f"decision_red_early_creep:{red_elapsed:.1f}s:{reason}"
+                    return self.clamp(
+                        max(self.green_release_speed_mps, self.go_speed_mps),
+                        0.0,
+                        self.max_speed_mps,
+                    ), f"ignore_vision_red_carla_{tl_state}"
+
+            # PERSON_FALSE_STOP_RELAX:
+            # Bu senaryoda NPC/yaya yokken düşük güvenli person hold aracı yol ortasında/direk yanında kilitleyebiliyor.
+            # Person kaynaklı STOP'u tam duruş yerine yavaş geçişe çevir.
+            if decision == "STOP" and "person" in reason.lower():
+                return min(self.slow_speed_mps, 1.0), f"person_stop_relaxed:{reason}"
 
             if decision == "STOP":
                 return 0.0, f"decision_stop:{reason}"
@@ -1635,11 +1150,7 @@ class TeknofestRouteAgentNode(Node):
                 return self.slow_speed_mps, f"decision_slow:{reason}"
 
             try:
-                if self.latest_decision.get("target_speed_kmh") is not None:
-                    target_speed = self.kmh_to_mps(self.latest_decision.get("target_speed_kmh"))
-                    reason = f"{reason}|decision_speed_kmh:{float(self.latest_decision.get('target_speed_kmh')):.1f}"
-                else:
-                    target_speed = float(self.latest_decision.get("target_speed", self.go_speed_mps))
+                target_speed = float(self.latest_decision.get("target_speed", self.go_speed_mps))
             except Exception:
                 target_speed = self.go_speed_mps
 
@@ -1671,17 +1182,11 @@ class TeknofestRouteAgentNode(Node):
             planner_target = self.get_fresh_planner_target()
             if planner_target is not None:
                 speed_hint = planner_target.get("speed_hint_mps")
-                if planner_target.get("speed_hint_kmh") is not None:
-                    try:
-                        speed_hint = self.kmh_to_mps(planner_target.get("speed_hint_kmh"))
-                    except Exception:
-                        pass
-
                 if speed_hint is not None:
                     try:
                         speed_hint = float(speed_hint)
                         target_speed = min(float(target_speed), speed_hint)
-                        reason = f"{reason}|planner_speed_hint:{self.mps_to_kmh(speed_hint):.1f}kmh/{speed_hint:.2f}mps"
+                        reason = f"{reason}|planner_speed_hint:{speed_hint:.2f}"
                     except Exception:
                         pass
 
@@ -1733,10 +1238,6 @@ class TeknofestRouteAgentNode(Node):
 
                 basic_steer = self.clamp(control.steer, -self.max_steer, self.max_steer)
                 control.steer = self.apply_lane_assist_to_steer(basic_steer, target_speed)
-
-                forbidden_steer_reason = self.apply_forbidden_turn_steer_guard(control)
-                if forbidden_steer_reason:
-                    reason = f"{reason}|{forbidden_steer_reason}"
 
                 # SMOOTH_LONGITUDINAL_FIX:
                 # BasicAgent steer iyi ama düşük hızda gaz/fren zıplatıyor.
@@ -1815,9 +1316,6 @@ class TeknofestRouteAgentNode(Node):
             "brake": round(control.brake, 3),
             "steer": round(control.steer, 3),
             "route_status": self.route_status,
-            "forbidden_turn_active": self.forbidden_turn_is_active(),
-            "forbidden_turn_request": self.forbidden_turn_request,
-            "forbidden_detour_target": self.forbidden_detour_target,
             "planner_enabled": self.use_planner_local_target,
             "planner_target_fresh": self.get_fresh_planner_target() is not None,
             "planner_target_age_s": round(time.time() - self.last_local_target_time, 3)
